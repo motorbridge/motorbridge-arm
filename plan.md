@@ -80,7 +80,9 @@ Nice-to-have parity:
 ## Phase E - Advanced Packages
 
 - [x] Add independent `ArmEndPos` high-level controller.
-- [x] Add dynamics subpackage baseline (robot_model/inertia/inverse_dynamics/forward_dynamics/energy/centroidal/derivatives).
+- [x] Upgrade dynamics subpackage to engineering-grade implementation:
+  robot_model/inertia/inverse_dynamics/forward_dynamics/energy/centroidal/derivatives
+  with shape checks, all-terms APIs, centroidal APIs, derivative APIs, and compatibility aliases.
 
 ## Phase D - Productization and Multi-Arm Readiness
 
