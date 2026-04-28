@@ -1,4 +1,4 @@
-from rebot_sdk.params.registry import create_default_registry
+from motorbridge_arm_sdk.params.registry import create_default_registry
 
 
 def test_registry_has_robstride_timeout():

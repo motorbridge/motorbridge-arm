@@ -1,5 +1,5 @@
-from rebot_sdk.safety.supervisor import SafetySupervisor
-from rebot_sdk.types import ArmConfig, JointConfig
+from motorbridge_arm_sdk.safety.supervisor import SafetySupervisor
+from motorbridge_arm_sdk.types import ArmConfig, JointConfig
 
 
 def test_clamp_joint_targets():

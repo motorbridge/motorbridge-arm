@@ -92,7 +92,7 @@ Nice-to-have parity:
 - [ ] Vendor capability matrix in code (mode/param support declarative checks).
 - [ ] Replay/trace tooling improvements.
 - [ ] Cross-platform CI matrix and packaging verification.
-- [x] 3D simulation visualization baseline: MeshCat real-time rendering support (`rebot_sdk.sim.MeshCatArmVisualizer`).
+- [x] 3D simulation visualization baseline: MeshCat real-time rendering support (`motorbridge_arm_sdk.sim.MeshCatArmVisualizer`).
 - [x] Simulation upgrade: FK/IK/trajectory planning+playback in `SimArm` and `examples/sim/*`.
 
 ---

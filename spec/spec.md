@@ -54,7 +54,7 @@ This ensures hardware control and model-based FK/IK share the same product defin
 
 ## Simulation Mode
 
-- `rebot_sdk.sim.SimArm` provides model-only operation.
+- `motorbridge_arm_sdk.sim.SimArm` provides model-only operation.
 - Simulation mode uses `Kinematics` and bypasses `motorbridge` bus commands.
 - Intended for:
   - FK/IK validation

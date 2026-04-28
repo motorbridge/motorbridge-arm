@@ -1,6 +1,6 @@
-from rebot_sdk.errors import ArmError
-from rebot_sdk.runtime import RuntimeStateMachine
-from rebot_sdk.types import ArmRunState
+from motorbridge_arm_sdk.errors import ArmError
+from motorbridge_arm_sdk.runtime import RuntimeStateMachine
+from motorbridge_arm_sdk.types import ArmRunState
 
 
 def test_valid_state_transition_flow():

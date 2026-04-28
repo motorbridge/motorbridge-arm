@@ -1,5 +1,5 @@
-from rebot_sdk.arm import Arm
-from rebot_sdk.types import ArmConfig, JointConfig
+from motorbridge_arm_sdk.arm import Arm
+from motorbridge_arm_sdk.types import ArmConfig, JointConfig
 
 
 def _mk_cfg() -> ArmConfig:

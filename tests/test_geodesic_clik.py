@@ -1,5 +1,5 @@
-from rebot_sdk.motion.geodesic import CliKParams, track_with_clik
-from rebot_sdk.types import Pose6D
+from motorbridge_arm_sdk.motion.geodesic import CliKParams, track_with_clik
+from motorbridge_arm_sdk.types import Pose6D
 
 
 class _FakeKin:

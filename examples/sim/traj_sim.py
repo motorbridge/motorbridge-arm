@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
-from rebot_sdk.model.profiles import rebot_arm_robstride
-from rebot_sdk.sim import MeshCatArmVisualizer, SimArm
-from rebot_sdk.types import Pose6D
+from motorbridge_arm_sdk.model.profiles import rebot_arm_robstride
+from motorbridge_arm_sdk.sim import MeshCatArmVisualizer, SimArm
+from motorbridge_arm_sdk.types import Pose6D
 
 
 def main() -> int:

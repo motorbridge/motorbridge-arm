@@ -1,4 +1,4 @@
-from rebot_sdk.motion.planner import estimate_steps
+from motorbridge_arm_sdk.motion.planner import estimate_steps
 
 
 def test_estimate_steps_min_two():

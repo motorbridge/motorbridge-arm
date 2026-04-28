@@ -30,3 +30,13 @@ def rebot_arm_robstride(channel: str = "can0") -> ArmConfig:
         urdf_path=urdf_path,
         ee_frame="tool0",
     )
+
+
+def arm_robstride(channel: str = "can0") -> ArmConfig:
+    """Preferred profile name under motorbridge-arm naming."""
+    return rebot_arm_robstride(channel=channel)
+
+
+def motorbridge_arm_robstride(channel: str = "can0") -> ArmConfig:
+    """Alias kept for explicit product naming."""
+    return rebot_arm_robstride(channel=channel)

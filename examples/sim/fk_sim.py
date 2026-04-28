@@ -3,8 +3,8 @@ from __future__ import annotations
 
 import math
 
-from rebot_sdk.model.profiles import rebot_arm_robstride
-from rebot_sdk.sim import MeshCatArmVisualizer, SimArm
+from motorbridge_arm_sdk.model.profiles import rebot_arm_robstride
+from motorbridge_arm_sdk.sim import MeshCatArmVisualizer, SimArm
 
 
 def main() -> int:

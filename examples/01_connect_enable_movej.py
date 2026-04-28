@@ -3,8 +3,8 @@ from __future__ import annotations
 
 import argparse
 
-from rebot_sdk.arm import Arm
-from rebot_sdk.model.profiles import rebot_arm_robstride
+from motorbridge_arm_sdk.arm import Arm
+from motorbridge_arm_sdk.model.profiles import rebot_arm_robstride
 
 
 def parse_q(text: str) -> list[float]:

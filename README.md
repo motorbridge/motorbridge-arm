@@ -33,7 +33,7 @@ Environment and dependency maintenance:
 
 - `spec/`: frozen product/API spec
 - `models/`: arm product model assets (`urdf/`, `meshes/`)
-- `rebot_sdk/`: implementation package
+- `motorbridge_arm_sdk/`: implementation package root (contains `motorbridge_arm_sdk` and legacy `rebot_sdk`)
 - `examples/`: runnable examples
 - `tests/`: unit tests
 
@@ -42,9 +42,9 @@ Environment and dependency maintenance:
 - Default product model:
   - `models/urdf/reBot-DevArm_fixend_description/urdf/reBot-DevArm_fixend.urdf`
 - Profile binding:
-  - `rebot_sdk/model/profiles.py` injects `urdf_path` and `ee_frame` into `ArmConfig`
+  - `motorbridge_arm_sdk/model/profiles.py` injects `urdf_path` and `ee_frame` into `ArmConfig`
 - Kinematics:
-  - `rebot_sdk/model/kinematics.py`
+  - `motorbridge_arm_sdk/model/kinematics.py`
   - Auto-uses Pinocchio when available and URDF exists
   - Falls back to simplified chain model if Pinocchio is missing
 
@@ -63,8 +63,16 @@ python examples/05_model_fk_ik_sim.py
 ## Naming Conventions
 
 - Product repository: `motorbridge-arm`
-- Python package namespace: `rebot_sdk` (current implementation root)
+- Python package namespace (preferred): `motorbridge_arm_sdk`
+- Python package namespace (legacy compatible): `rebot_sdk`
 - Main product-level class: `Arm`
+
+Import examples:
+
+```python
+from motorbridge_arm_sdk.arm import Arm
+from motorbridge_arm_sdk.model.profiles import arm_robstride
+```
 
 Why `Arm`:
 - This repository is the robotic-arm product form layer.

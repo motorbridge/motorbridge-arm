@@ -1,5 +1,5 @@
-from rebot_sdk.errors import ArmError
-from rebot_sdk.session import MotorBridgeSession
+from motorbridge_arm_sdk.errors import ArmError
+from motorbridge_arm_sdk.session import MotorBridgeSession
 
 
 class _FlakyMotor:

@@ -1,5 +1,5 @@
-from rebot_sdk.motion.planner import ArcSpec, interpolate_joint_linear, interpolate_pose_circular, interpolate_pose_geodesic, interpolate_pose_linear
-from rebot_sdk.types import Pose6D
+from motorbridge_arm_sdk.motion.planner import ArcSpec, interpolate_joint_linear, interpolate_pose_circular, interpolate_pose_geodesic, interpolate_pose_linear
+from motorbridge_arm_sdk.types import Pose6D
 
 
 def test_linear_pose_interpolation_endpoints():

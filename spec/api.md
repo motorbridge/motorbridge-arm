@@ -52,5 +52,5 @@ See `error_codes.md`.
 
 ## High-level Controller and Dynamics
 
-- `rebot_sdk.ArmEndPos`: independent high-level end-effector controller (`move_to_ik`, `move_to_traj`).
-- `rebot_sdk.dynamics`: subpackage with `robot_model/inertia/inverse_dynamics/forward_dynamics/energy/centroidal/derivatives`.
+- `motorbridge_arm_sdk.ArmEndPos`: independent high-level end-effector controller (`move_to_ik`, `move_to_traj`).
+- `motorbridge_arm_sdk.dynamics`: subpackage with `robot_model/inertia/inverse_dynamics/forward_dynamics/energy/centroidal/derivatives`.

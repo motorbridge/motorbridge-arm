@@ -1,4 +1,4 @@
-from rebot_sdk.model.inverse_kinematics import IKParams, clamp_config_safe
+from motorbridge_arm_sdk.model.inverse_kinematics import IKParams, clamp_config_safe
 
 
 class _FakeModel:

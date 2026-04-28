@@ -34,11 +34,11 @@ dev = [
 ]
 
 [tool.setuptools]
-package-dir = {"" = "rebot_sdk"}
+package-dir = {"" = "motorbridge_arm_sdk"}
 
 [tool.setuptools.packages.find]
-where = ["rebot_sdk"]
+where = ["motorbridge_arm_sdk"]
 
 [tool.pytest.ini_options]
-pythonpath = ["rebot_sdk"]
+pythonpath = ["motorbridge_arm_sdk"]
 testpaths = ["tests"]

@@ -124,11 +124,11 @@
 
 ## 4. 建议代码结构（新 SDK）
 
-建议新目录：`/home/w0x7ce/Downloads/dm_candrive/arm_sdk/rebot_sdk`（后续创建）
+建议新目录：`/home/w0x7ce/Downloads/dm_candrive/arm_sdk/motorbridge_arm_sdk`（后续创建）
 
 ```text
-rebot_sdk/
-  rebot_sdk/
+motorbridge_arm_sdk/
+  motorbridge_arm_sdk/
     __init__.py
     arm.py                  # Arm 主对象
     session.py              # motorbridge controller/motor 生命周期
@@ -187,7 +187,7 @@ rebot_sdk/
 - [ ] 增加会话级日志：连接参数、各关节注册信息、失败原因
 
 交付物：
-- `rebot_sdk/session.py`
+- `motorbridge_arm_sdk/session.py`
 - `examples/00_session_smoke.py`
 
 验收标准：
@@ -205,9 +205,9 @@ rebot_sdk/
 - [ ] 增加示例：`examples/01_connect_enable_movej.py`
 
 交付物：
-- `rebot_sdk/arm.py`
-- `rebot_sdk/telemetry/state_cache.py`
-- `rebot_sdk/motion/executor.py`
+- `motorbridge_arm_sdk/arm.py`
+- `motorbridge_arm_sdk/telemetry/state_cache.py`
+- `motorbridge_arm_sdk/motion/executor.py`
 
 验收标准：
 - [ ] 单臂能稳定执行 `connect -> enable -> move_j -> home -> disable`
@@ -224,7 +224,7 @@ rebot_sdk/
 - [ ] 完成故障处理动作：`estop -> disable -> fault_report`
 
 交付物：
-- `rebot_sdk/safety/supervisor.py`
+- `motorbridge_arm_sdk/safety/supervisor.py`
 - `tests/test_safety_limits.py`
 - `tests/test_watchdog_timeout.py`
 
@@ -243,8 +243,8 @@ rebot_sdk/
 - [ ] 实现参数持久化：设备 `store_parameters` + 本地 `snapshot.json`
 
 交付物：
-- `rebot_sdk/params/registry.py`
-- `rebot_sdk/calibration/zeroing.py`
+- `motorbridge_arm_sdk/params/registry.py`
+- `motorbridge_arm_sdk/calibration/zeroing.py`
 - `examples/02_param_rw_and_zero.py`
 
 验收标准：
@@ -264,8 +264,8 @@ rebot_sdk/
 - [ ] 增加无解/奇异处理：降速、回退、拒绝执行
 
 交付物：
-- `rebot_sdk/model/kinematics.py`
-- `rebot_sdk/motion/planner.py`
+- `motorbridge_arm_sdk/model/kinematics.py`
+- `motorbridge_arm_sdk/motion/planner.py`
 - `examples/03_movel_movec.py`
 
 验收标准：
@@ -283,7 +283,7 @@ rebot_sdk/
 - [ ] 更新安全阈值（负载变化影响速度/力矩限制）
 
 交付物：
-- `rebot_sdk/tooling.py`
+- `motorbridge_arm_sdk/tooling.py`
 - `examples/04_gripper_and_tool.py`
 
 验收标准：

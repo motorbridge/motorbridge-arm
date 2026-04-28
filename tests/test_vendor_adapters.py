@@ -1,4 +1,4 @@
-from rebot_sdk.vendors import create_default_adapter_registry
+from motorbridge_arm_sdk.vendors import create_default_adapter_registry
 
 
 class _FakeController:

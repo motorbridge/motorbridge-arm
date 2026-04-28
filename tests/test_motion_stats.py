@@ -1,5 +1,5 @@
-from rebot_sdk.motion.stats import compute_trajectory_stats
-from rebot_sdk.types import Pose6D
+from motorbridge_arm_sdk.motion.stats import compute_trajectory_stats
+from motorbridge_arm_sdk.types import Pose6D
 
 
 def test_compute_trajectory_stats_basic():

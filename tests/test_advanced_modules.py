@@ -1,5 +1,5 @@
-from rebot_sdk import ArmEndPos
-from rebot_sdk.dynamics import (
+from motorbridge_arm_sdk import ArmEndPos
+from motorbridge_arm_sdk.dynamics import (
     aba_acceleration,
     centroidal_momentum,
     inverse_dynamics_derivatives,
