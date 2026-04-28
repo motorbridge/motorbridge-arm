@@ -10,6 +10,10 @@ from .robot_model import DynamicsRobotModel
 
 
 def _as_a(drm: DynamicsRobotModel, a) -> np.ndarray:
+    if np is None:
+        if a is None:
+            return [0.0] * (drm.nv if drm.has_pinocchio else 0)
+        return [float(x) for x in a]
     if a is None:
         return np.zeros(drm.nv if drm.has_pinocchio else 0, dtype=float)
     return np.asarray(a, dtype=float)
@@ -26,6 +30,8 @@ def compute_inverse_dynamics(drm: DynamicsRobotModel, q=None, v=None, a=None, fe
     aa = _as_a(drm, a)
     if not drm.has_pinocchio:
         n = int(len(qv) or len(vv) or len(aa))
+        if np is None:
+            return [0.0] * n
         return np.zeros(n, dtype=float)
 
     _check_q_shape(drm, qv, "compute_inverse_dynamics")
@@ -41,6 +47,8 @@ def compute_inverse_dynamics(drm: DynamicsRobotModel, q=None, v=None, a=None, fe
 def compute_generalized_gravity(drm: DynamicsRobotModel, q=None) -> np.ndarray:
     qv = _as_q(drm, q)
     if not drm.has_pinocchio:
+        if np is None:
+            return [0.0] * int(len(qv))
         return np.zeros(int(len(qv)), dtype=float)
     _check_q_shape(drm, qv, "compute_generalized_gravity")
     drm.pin.computeGeneralizedGravity(drm.model, drm.data, qv)
@@ -50,6 +58,8 @@ def compute_generalized_gravity(drm: DynamicsRobotModel, q=None) -> np.ndarray:
 def compute_static_torque(drm: DynamicsRobotModel, q=None, fext=None) -> np.ndarray:
     qv = _as_q(drm, q)
     if not drm.has_pinocchio:
+        if np is None:
+            return [0.0] * int(len(qv))
         return np.zeros(int(len(qv)), dtype=float)
     _check_q_shape(drm, qv, "compute_static_torque")
     if fext is None:
@@ -61,4 +71,5 @@ def compute_static_torque(drm: DynamicsRobotModel, q=None, fext=None) -> np.ndar
 # Backward-compatible alias
 
 def rnea_torque(drm, q, dq, ddq):
-    return compute_inverse_dynamics(drm, q=q, v=dq, a=ddq).tolist()
+    out = compute_inverse_dynamics(drm, q=q, v=dq, a=ddq)
+    return out if isinstance(out, list) else out.tolist()

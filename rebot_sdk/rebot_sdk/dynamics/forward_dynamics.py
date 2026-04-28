@@ -10,6 +10,10 @@ from .robot_model import DynamicsRobotModel
 
 
 def _as_tau(drm: DynamicsRobotModel, tau) -> np.ndarray:
+    if np is None:
+        if tau is None:
+            return [0.0] * (drm.nv if drm.has_pinocchio else 0)
+        return [float(x) for x in tau]
     if tau is None:
         return np.zeros(drm.nv if drm.has_pinocchio else 0, dtype=float)
     return np.asarray(tau, dtype=float)
@@ -25,6 +29,8 @@ def compute_forward_dynamics(drm: DynamicsRobotModel, q=None, v=None, tau=None) 
     vv = _as_v(drm, v)
     tv = _as_tau(drm, tau)
     if not drm.has_pinocchio:
+        if np is None:
+            return [0.0] * int(len(qv) or len(vv) or len(tv))
         return np.zeros(int(len(qv) or len(vv) or len(tv)), dtype=float)
 
     _check_q_shape(drm, qv, "compute_forward_dynamics")
@@ -40,6 +46,8 @@ def forward_dynamics_from_nle(drm: DynamicsRobotModel, q=None, v=None, tau=None)
     vv = _as_v(drm, v)
     tv = _as_tau(drm, tau)
     if not drm.has_pinocchio:
+        if np is None:
+            return [0.0] * int(len(qv) or len(vv) or len(tv))
         return np.zeros(int(len(qv) or len(vv) or len(tv)), dtype=float)
 
     _check_q_shape(drm, qv, "forward_dynamics_from_nle")
@@ -53,4 +61,5 @@ def forward_dynamics_from_nle(drm: DynamicsRobotModel, q=None, v=None, tau=None)
 # Backward-compatible alias
 
 def aba_acceleration(drm, q, dq, tau):
-    return compute_forward_dynamics(drm, q=q, v=dq, tau=tau).tolist()
+    out = compute_forward_dynamics(drm, q=q, v=dq, tau=tau)
+    return out if isinstance(out, list) else out.tolist()

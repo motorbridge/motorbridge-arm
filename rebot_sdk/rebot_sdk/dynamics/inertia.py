@@ -11,6 +11,10 @@ from .robot_model import DynamicsRobotModel, neutral_configuration
 
 
 def _as_q(drm: DynamicsRobotModel, q) -> np.ndarray:
+    if np is None:
+        if q is None:
+            return list(neutral_configuration(drm)) if drm.has_pinocchio else []
+        return [float(x) for x in q]
     if q is None:
         if drm.has_pinocchio:
             return np.asarray(neutral_configuration(drm), dtype=float)
@@ -19,6 +23,10 @@ def _as_q(drm: DynamicsRobotModel, q) -> np.ndarray:
 
 
 def _as_v(drm: DynamicsRobotModel, v) -> np.ndarray:
+    if np is None:
+        if v is None:
+            return [0.0] * (drm.nv if drm.has_pinocchio else 0)
+        return [float(x) for x in v]
     if v is None:
         return np.zeros(drm.nv if drm.has_pinocchio else 0, dtype=float)
     return np.asarray(v, dtype=float)
@@ -38,6 +46,8 @@ def compute_mass_matrix(drm: DynamicsRobotModel, q=None) -> np.ndarray:
     qv = _as_q(drm, q)
     if not drm.has_pinocchio:
         n = int(len(qv))
+        if np is None:
+            return [[1.0 if i == j else 0.0 for j in range(n)] for i in range(n)]
         return np.eye(n, dtype=float)
     _check_q_shape(drm, qv, "compute_mass_matrix")
     drm.pin.crba(drm.model, drm.data, qv)
@@ -49,6 +59,8 @@ def compute_coriolis_matrix(drm: DynamicsRobotModel, q=None, v=None) -> np.ndarr
     vv = _as_v(drm, v)
     if not drm.has_pinocchio:
         n = int(len(qv) or len(vv))
+        if np is None:
+            return [[0.0 for _ in range(n)] for _ in range(n)]
         return np.zeros((n, n), dtype=float)
     _check_q_shape(drm, qv, "compute_coriolis_matrix")
     _check_v_shape(drm, vv, "compute_coriolis_matrix")
@@ -59,6 +71,8 @@ def compute_coriolis_matrix(drm: DynamicsRobotModel, q=None, v=None) -> np.ndarr
 def compute_gravity_vector(drm: DynamicsRobotModel, q=None) -> np.ndarray:
     qv = _as_q(drm, q)
     if not drm.has_pinocchio:
+        if np is None:
+            return [0.0] * int(len(qv))
         return np.zeros(int(len(qv)), dtype=float)
     _check_q_shape(drm, qv, "compute_gravity_vector")
     drm.pin.computeGeneralizedGravity(drm.model, drm.data, qv)
@@ -69,6 +83,8 @@ def compute_nle(drm: DynamicsRobotModel, q=None, v=None) -> np.ndarray:
     qv = _as_q(drm, q)
     vv = _as_v(drm, v)
     if not drm.has_pinocchio:
+        if np is None:
+            return [0.0] * int(len(qv) or len(vv))
         return np.zeros(int(len(qv) or len(vv)), dtype=float)
     _check_q_shape(drm, qv, "compute_nle")
     _check_v_shape(drm, vv, "compute_nle")
@@ -81,6 +97,12 @@ def compute_all_terms(drm: DynamicsRobotModel, q=None, v=None) -> tuple[np.ndarr
     vv = _as_v(drm, v)
     if not drm.has_pinocchio:
         n = int(len(qv) or len(vv))
+        if np is None:
+            return (
+                [[1.0 if i == j else 0.0 for j in range(n)] for i in range(n)],
+                [[0.0 for _ in range(n)] for _ in range(n)],
+                [0.0] * n,
+            )
         return np.eye(n, dtype=float), np.zeros((n, n), dtype=float), np.zeros(n, dtype=float)
     _check_q_shape(drm, qv, "compute_all_terms")
     _check_v_shape(drm, vv, "compute_all_terms")
@@ -91,4 +113,5 @@ def compute_all_terms(drm: DynamicsRobotModel, q=None, v=None) -> tuple[np.ndarr
 # Backward-compatible alias
 
 def mass_matrix(drm: DynamicsRobotModel, q) -> list[list[float]]:
-    return compute_mass_matrix(drm, q).tolist()
+    m = compute_mass_matrix(drm, q)
+    return m if isinstance(m, list) else m.tolist()

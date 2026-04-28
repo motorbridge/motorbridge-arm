@@ -12,6 +12,8 @@ from .robot_model import DynamicsRobotModel
 def compute_center_of_mass(drm: DynamicsRobotModel, q=None, center_zero: bool = False) -> np.ndarray:
     qv = _as_q(drm, q)
     if not drm.has_pinocchio:
+        if np is None:
+            return [0.0, 0.0, 0.0]
         return np.zeros(3, dtype=float)
     _check_q_shape(drm, qv, "compute_center_of_mass")
     if center_zero:
@@ -25,6 +27,8 @@ def compute_com_velocity(drm: DynamicsRobotModel, q=None, v=None) -> np.ndarray:
     qv = _as_q(drm, q)
     vv = _as_v(drm, v)
     if not drm.has_pinocchio:
+        if np is None:
+            return [0.0, 0.0, 0.0]
         return np.zeros(3, dtype=float)
     _check_q_shape(drm, qv, "compute_com_velocity")
     _check_v_shape(drm, vv, "compute_com_velocity")
@@ -36,6 +40,8 @@ def compute_centroidal_momentum(drm: DynamicsRobotModel, q=None, v=None) -> np.n
     qv = _as_q(drm, q)
     vv = _as_v(drm, v)
     if not drm.has_pinocchio:
+        if np is None:
+            return [0.0] * 6
         return np.zeros(6, dtype=float)
     _check_q_shape(drm, qv, "compute_centroidal_momentum")
     _check_v_shape(drm, vv, "compute_centroidal_momentum")
@@ -47,6 +53,8 @@ def compute_centroidal_matrix(drm: DynamicsRobotModel, q=None, v=None) -> np.nda
     qv = _as_q(drm, q)
     vv = _as_v(drm, v)
     if not drm.has_pinocchio:
+        if np is None:
+            return [[0.0 for _ in range(int(len(qv) or len(vv)))] for _ in range(6)]
         return np.zeros((6, int(len(qv) or len(vv))), dtype=float)
     _check_q_shape(drm, qv, "compute_centroidal_matrix")
     _check_v_shape(drm, vv, "compute_centroidal_matrix")
@@ -57,4 +65,5 @@ def compute_centroidal_matrix(drm: DynamicsRobotModel, q=None, v=None) -> np.nda
 # Backward-compatible alias
 
 def centroidal_momentum(drm, q, dq):
-    return compute_centroidal_momentum(drm, q=q, v=dq).tolist()
+    out = compute_centroidal_momentum(drm, q=q, v=dq)
+    return out if isinstance(out, list) else out.tolist()

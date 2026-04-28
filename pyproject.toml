@@ -15,6 +15,9 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+web = [
+  "websockets>=12.0",
+]
 kinematics = [
   "pin>=3.3.1",
   "numpy>=1.24",

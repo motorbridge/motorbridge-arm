@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from ..model.kinematics import Kinematics
 from ..motion.planner import ArcSpec, interpolate_pose_circular
 from ..trajectory.clik_tracker import IKParams
-from ..trajectory.sampler import TrajPlanParams
+from ..trajectory.sampler import TrajPlanParams, TrajProfile
 from ..trajectory.trajectory_planner import plan_joint_space_trajectory
 from ..types import ArmConfig, Pose6D
 
@@ -26,6 +26,15 @@ class SimTrajectory:
 
 class SimArm:
     """Model-only arm simulator without motor hardware."""
+
+    @staticmethod
+    def _profile_from_name(profile: str) -> TrajProfile:
+        p = str(profile or "min_jerk").strip().lower()
+        if p == "linear":
+            return TrajProfile.LINEAR
+        if p == "geodesic":
+            return TrajProfile.GEODESIC
+        return TrajProfile.MIN_JERK
 
     def __init__(self, config: ArmConfig) -> None:
         self._cfg = config
@@ -56,7 +65,6 @@ class SimArm:
         profile: str = "min_jerk",
         null_gain: float = 0.1,
     ) -> SimTrajectory:
-        _ = profile
         q_start = self.get_joint_positions()
         q_end = self.solve_ik(target)
         traj = plan_joint_space_trajectory(
@@ -66,7 +74,7 @@ class SimArm:
             q_end=q_end,
             duration=duration_s,
             kin=self._kin,
-            params=TrajPlanParams(dt=self._cfg.loop_dt_s),
+            params=TrajPlanParams(dt=self._cfg.loop_dt_s, profile=self._profile_from_name(profile)),
             ik_params=IKParams(),
             null_gain=null_gain,
             start_pose=self.get_pose(),
@@ -90,8 +98,7 @@ class SimArm:
         profile: str = "min_jerk",
         null_gain: float = 0.1,
     ) -> SimTrajectory:
-        _ = profile
-        traj = self.plan_l(target=target, duration_s=duration_s, null_gain=null_gain)
+        traj = self.plan_l(target=target, duration_s=duration_s, profile=profile, null_gain=null_gain)
         if traj.points:
             self._q = list(traj.points[-1].q)
         return traj
