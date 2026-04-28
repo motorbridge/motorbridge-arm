@@ -1,3 +1,8 @@
-from .simulator import SimArm
+from .simulator import SimArm, SimTrajectory, SimTrajectoryPoint
 
-__all__ = ["SimArm"]
+try:  # pragma: no cover
+    from .visualizer import MeshCatArmVisualizer
+except Exception:  # pragma: no cover
+    MeshCatArmVisualizer = None  # type: ignore
+
+__all__ = ["SimArm", "SimTrajectory", "SimTrajectoryPoint", "MeshCatArmVisualizer"]
