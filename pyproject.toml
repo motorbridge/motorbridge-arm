@@ -1,0 +1,30 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "motorbridge-arm"
+version = "0.1.0"
+description = "Product-form arm SDK built on motorbridge Python binding"
+readme = "README.md"
+requires-python = ">=3.10"
+authors = [{name = "motorbridge team"}]
+dependencies = [
+  "motorbridge>=0.2.4",
+]
+
+[project.optional-dependencies]
+kinematics = [
+  "pin",
+  "numpy>=1.24",
+]
+
+[tool.setuptools]
+package-dir = {"" = "rebot_sdk"}
+
+[tool.setuptools.packages.find]
+where = ["rebot_sdk"]
+
+[tool.pytest.ini_options]
+pythonpath = ["rebot_sdk"]
+testpaths = ["tests"]

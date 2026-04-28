@@ -1,0 +1,155 @@
+from __future__ import annotations
+
+from dataclasses import dataclass
+from enum import IntEnum
+
+from .errors import ArmError, ArmErrorCode
+from .types import JointConfig
+
+
+class ModeLike(IntEnum):
+    MIT = 0
+    POS_VEL = 1
+    VEL = 2
+    FORCE_POS = 3
+
+
+@dataclass(slots=True)
+class JointHandle:
+    config: JointConfig
+    motor: object
+
+
+class MotorBridgeSession:
+    def __init__(self, channel: str) -> None:
+        self._channel = channel
+        self._controller: object | None = None
+        self._joints: list[JointHandle] = []
+
+    @property
+    def joints(self) -> list[JointHandle]:
+        return self._joints
+
+    def connect(self) -> None:
+        if self._controller is None:
+            try:
+                from motorbridge import Controller
+            except Exception as exc:
+                raise ArmError(
+                    ArmErrorCode.ERR_BUS,
+                    "motorbridge package not available; install dependency before hardware run",
+                ) from exc
+            self._controller = Controller(self._channel)
+
+    def close(self) -> None:
+        if self._controller is not None:
+            try:
+                self.disable_all()
+            except Exception:
+                pass
+            try:
+                self._controller.shutdown()
+            except Exception:
+                pass
+            self._controller.close()
+            self._controller = None
+        self._joints.clear()
+
+    def add_joint(self, joint: JointConfig) -> None:
+        if self._controller is None:
+            raise ArmError(ArmErrorCode.ERR_STATE, "controller not connected")
+        vendor = joint.vendor.lower()
+        if vendor == "damiao":
+            m = self._controller.add_damiao_motor(joint.esc_id, joint.feedback_id, joint.model)
+        elif vendor == "robstride":
+            m = self._controller.add_robstride_motor(joint.esc_id, joint.feedback_id, joint.model)
+        elif vendor == "myactuator":
+            m = self._controller.add_myactuator_motor(joint.esc_id, joint.feedback_id, joint.model)
+        elif vendor == "hightorque":
+            m = self._controller.add_hightorque_motor(joint.esc_id, joint.feedback_id, joint.model)
+        elif vendor == "hexfellow":
+            m = self._controller.add_hexfellow_motor(joint.esc_id, joint.feedback_id, joint.model)
+        else:
+            raise ArmError(ArmErrorCode.ERR_UNSUPPORTED, f"unsupported vendor: {joint.vendor}")
+        self._joints.append(JointHandle(config=joint, motor=m))
+
+    def enable_all(self) -> None:
+        if self._controller is None:
+            raise ArmError(ArmErrorCode.ERR_STATE, "controller not connected")
+        self._controller.enable_all()
+
+    def disable_all(self) -> None:
+        if self._controller is None:
+            return
+        self._controller.disable_all()
+
+    def ensure_mode_all(self, mode: int, timeout_ms: int = 1000) -> None:
+        for h in self._joints:
+            h.motor.ensure_mode(mode, timeout_ms)
+
+    def set_pos_vel_all(self, q: list[float], vlim: float) -> None:
+        if len(q) != len(self._joints):
+            raise ArmError(ArmErrorCode.ERR_CONFIG, "q length mismatch")
+        for target, h in zip(q, self._joints):
+            motor_target = target * h.config.direction + h.config.zero_offset
+            h.motor.send_pos_vel(float(motor_target), float(vlim))
+
+    def request_feedback_all(self) -> None:
+        for h in self._joints:
+            h.motor.request_feedback()
+
+    def set_zero_joint(self, index: int) -> None:
+        self._joints[index].motor.disable()
+        self._joints[index].motor.set_zero_position()
+
+    def set_zero_all(self) -> None:
+        for i in range(len(self._joints)):
+            self.set_zero_joint(i)
+
+    def set_param(self, index: int, param_id: int, param_type: str, value: int | float) -> None:
+        h = self._joints[index]
+        vendor = h.config.vendor.lower()
+        if vendor == "robstride":
+            if param_type == "i8":
+                h.motor.robstride_write_param_i8(param_id, int(value))
+            elif param_type == "u8":
+                h.motor.robstride_write_param_u8(param_id, int(value))
+            elif param_type == "u16":
+                h.motor.robstride_write_param_u16(param_id, int(value))
+            elif param_type == "u32":
+                h.motor.robstride_write_param_u32(param_id, int(value))
+            elif param_type == "f32":
+                h.motor.robstride_write_param_f32(param_id, float(value))
+            else:
+                raise ArmError(ArmErrorCode.ERR_UNSUPPORTED, f"unsupported param type: {param_type}")
+            return
+        if vendor == "damiao":
+            if param_type == "u32":
+                h.motor.damiao_write_param_u32(param_id, int(value))
+            elif param_type == "f32":
+                h.motor.damiao_write_param_f32(param_id, float(value))
+            else:
+                raise ArmError(ArmErrorCode.ERR_UNSUPPORTED, f"damiao unsupported param type: {param_type}")
+            return
+        raise ArmError(ArmErrorCode.ERR_UNSUPPORTED, f"param rw not implemented for vendor={vendor}")
+
+    def get_param(self, index: int, param_id: int, param_type: str, timeout_ms: int = 1000) -> int | float:
+        h = self._joints[index]
+        vendor = h.config.vendor.lower()
+        if vendor == "robstride":
+            if param_type == "i8":
+                return int(h.motor.robstride_get_param_i8(param_id, timeout_ms))
+            if param_type == "u8":
+                return int(h.motor.robstride_get_param_u8(param_id, timeout_ms))
+            if param_type == "u16":
+                return int(h.motor.robstride_get_param_u16(param_id, timeout_ms))
+            if param_type == "u32":
+                return int(h.motor.robstride_get_param_u32(param_id, timeout_ms))
+            if param_type == "f32":
+                return float(h.motor.robstride_get_param_f32(param_id, timeout_ms))
+        if vendor == "damiao":
+            if param_type == "u32":
+                return int(h.motor.damiao_get_param_u32(param_id, timeout_ms))
+            if param_type == "f32":
+                return float(h.motor.damiao_get_param_f32(param_id, timeout_ms))
+        raise ArmError(ArmErrorCode.ERR_UNSUPPORTED, f"unsupported get_param type={param_type} vendor={vendor}")
