@@ -23,7 +23,7 @@ class SimuWsGateway:
         self._sim.set_joint_positions([0.0 for _ in self._sim.get_joint_positions()])
         self._state_task: asyncio.Task | None = None
         self._bus = ProtocolBus()
-        self._waypoints: dict[str, dict[str, float]] = {}
+        self._waypoints: dict[str, dict[str, Any]] = {}
         self._motion_task: asyncio.Task | None = None
         self._motion_stop = False
         self._motion_status: dict[str, Any] = {"running": False, "name": "idle"}
@@ -111,7 +111,9 @@ class SimuWsGateway:
             pose = req.get("pose") or {}
             if not wid:
                 return {"ok": False, "req_id": req_id, "op": op, "error": "missing_id"}
+            label = str(req.get("label") or pose.get("label") or pose.get("name") or wid).strip() or wid
             self._waypoints[wid] = {
+                "label": label,
                 "x": float(pose.get("x", 0.0)),
                 "y": float(pose.get("y", 0.0)),
                 "z": float(pose.get("z", 0.0)),
@@ -126,13 +128,16 @@ class SimuWsGateway:
             if not wid or wid not in self._waypoints:
                 return {"ok": False, "req_id": req_id, "op": op, "error": "waypoint_not_found"}
             pose = req.get("pose") or {}
+            prev = self._waypoints[wid]
+            label = str(req.get("label") or pose.get("label") or pose.get("name") or prev.get("label") or wid).strip() or wid
             self._waypoints[wid] = {
-                "x": float(pose.get("x", self._waypoints[wid]["x"])),
-                "y": float(pose.get("y", self._waypoints[wid]["y"])),
-                "z": float(pose.get("z", self._waypoints[wid]["z"])),
-                "roll": float(pose.get("roll", self._waypoints[wid]["roll"])),
-                "pitch": float(pose.get("pitch", self._waypoints[wid]["pitch"])),
-                "yaw": float(pose.get("yaw", self._waypoints[wid]["yaw"])),
+                "label": label,
+                "x": float(pose.get("x", prev["x"])),
+                "y": float(pose.get("y", prev["y"])),
+                "z": float(pose.get("z", prev["z"])),
+                "roll": float(pose.get("roll", prev["roll"])),
+                "pitch": float(pose.get("pitch", prev["pitch"])),
+                "yaw": float(pose.get("yaw", prev["yaw"])),
             }
             await self._broadcast_event("waypoint", {"event": "updated", "id": wid, "pose": self._waypoints[wid]})
             return {"ok": True, "req_id": req_id, "op": op, "data": {"waypoints": self._waypoints}}
@@ -167,6 +172,26 @@ class SimuWsGateway:
             }
             await self._broadcast_event("task", {"event": "accepted", "task": self._motion_status})
             self._motion_task = asyncio.create_task(self._run_waypoints(from_id, to_id, duration_s, profile))
+            return {"ok": True, "req_id": req_id, "op": op, "data": {"status": self._motion_status}}
+        if op == "sim_run_sequence":
+            ids = req.get("ids") or []
+            duration_s = float(req.get("duration_s") or 2.0)
+            profile = str(req.get("profile") or "min_jerk")
+            if not isinstance(ids, list) or len(ids) < 2:
+                return {"ok": False, "req_id": req_id, "op": op, "error": "invalid_ids"}
+            if any(str(i) not in self._waypoints for i in ids):
+                return {"ok": False, "req_id": req_id, "op": op, "error": "waypoint_not_found"}
+            if self._motion_task and not self._motion_task.done():
+                return {"ok": False, "req_id": req_id, "op": op, "error": "motion_busy"}
+            self._motion_stop = False
+            self._motion_status = {
+                "running": True,
+                "name": "sim_run_sequence",
+                "ids": [str(i) for i in ids],
+                "profile": profile,
+            }
+            await self._broadcast_event("task", {"event": "accepted", "task": self._motion_status})
+            self._motion_task = asyncio.create_task(self._run_sequence([str(i) for i in ids], duration_s, profile))
             return {"ok": True, "req_id": req_id, "op": op, "data": {"status": self._motion_status}}
         if op == "sim_stop":
             self._motion_stop = True
@@ -204,12 +229,21 @@ class SimuWsGateway:
             "ts": time.time(),
         }
 
+    def _waypoint_pose(self, wid: str) -> Pose6D:
+        p = self._waypoints[wid]
+        return Pose6D(
+            x=float(p.get("x", 0.0)),
+            y=float(p.get("y", 0.0)),
+            z=float(p.get("z", 0.0)),
+            roll=float(p.get("roll", 0.0)),
+            pitch=float(p.get("pitch", 0.0)),
+            yaw=float(p.get("yaw", 0.0)),
+        )
+
     async def _run_waypoints(self, from_id: str, to_id: str, duration_s: float, profile: str) -> None:
         try:
-            p1 = self._waypoints[from_id]
-            p2 = self._waypoints[to_id]
-            pose1 = Pose6D(**p1)
-            pose2 = Pose6D(**p2)
+            pose1 = self._waypoint_pose(from_id)
+            pose2 = self._waypoint_pose(to_id)
             q1 = self._sim.solve_ik(pose1)
             self._sim.move_j(q1)
             traj = self._sim.plan_l(pose2, duration_s=duration_s, profile=profile)
@@ -224,6 +258,44 @@ class SimuWsGateway:
             await self._broadcast_event("task", {"event": "done", "task": self._motion_status})
         except asyncio.CancelledError:
             self._motion_status = {"running": False, "name": "stopped", "from_id": from_id, "to_id": to_id}
+            await self._broadcast_event("task", {"event": "stopped", "task": self._motion_status})
+            raise
+        except Exception as exc:
+            self._motion_status = {"running": False, "name": "error", "error": str(exc)}
+            await self._broadcast_event("task", {"event": "error", "task": self._motion_status})
+
+    async def _run_sequence(self, ids: list[str], duration_s: float, profile: str) -> None:
+        try:
+            if len(ids) < 2:
+                self._motion_status = {"running": False, "name": "done", "ids": ids}
+                await self._broadcast_event("task", {"event": "done", "task": self._motion_status})
+                return
+
+            # Align once to the first point, then move continuously point-to-point.
+            first_pose = self._waypoint_pose(ids[0])
+            q0 = self._sim.solve_ik(first_pose)
+            self._sim.move_j(q0)
+
+            for i in range(1, len(ids)):
+                if self._motion_stop:
+                    self._motion_status = {"running": False, "name": "stopped", "ids": ids}
+                    await self._broadcast_event("task", {"event": "stopped", "task": self._motion_status})
+                    return
+
+                to_id = ids[i]
+                to_pose = self._waypoint_pose(to_id)
+                traj = self._sim.plan_l(to_pose, duration_s=duration_s, profile=profile)
+                for pt in traj.points:
+                    if self._motion_stop:
+                        self._motion_status = {"running": False, "name": "stopped", "ids": ids}
+                        await self._broadcast_event("task", {"event": "stopped", "task": self._motion_status})
+                        return
+                    self._sim.set_joint_positions(pt.q)
+                    await asyncio.sleep(max(0.001, self._sim._cfg.loop_dt_s))
+            self._motion_status = {"running": False, "name": "done", "ids": ids}
+            await self._broadcast_event("task", {"event": "done", "task": self._motion_status})
+        except asyncio.CancelledError:
+            self._motion_status = {"running": False, "name": "stopped", "ids": ids}
             await self._broadcast_event("task", {"event": "stopped", "task": self._motion_status})
             raise
         except Exception as exc:

@@ -25,6 +25,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     add = sub.add_parser("waypoint-add", help="add/update waypoint")
     add.add_argument("--id", required=True)
+    add.add_argument("--label", default="")
     add.add_argument("--x", type=float, required=True)
     add.add_argument("--y", type=float, required=True)
     add.add_argument("--z", type=float, required=True)
@@ -36,6 +37,7 @@ def build_parser() -> argparse.ArgumentParser:
     rem.add_argument("--id", required=True)
     upd = sub.add_parser("waypoint-update", help="update waypoint pose")
     upd.add_argument("--id", required=True)
+    upd.add_argument("--label", default="")
     upd.add_argument("--x", type=float, required=True)
     upd.add_argument("--y", type=float, required=True)
     upd.add_argument("--z", type=float, required=True)
@@ -53,6 +55,10 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument("--to-id", required=True)
     run.add_argument("--duration-s", type=float, default=2.0)
     run.add_argument("--profile", choices=["linear", "min_jerk", "geodesic"], default="min_jerk")
+    runseq = sub.add_parser("run-seq", help="run sequence by ids")
+    runseq.add_argument("--ids", required=True, help="comma-separated waypoint ids, e.g. P1,P2,P3")
+    runseq.add_argument("--duration-s", type=float, default=2.0)
+    runseq.add_argument("--profile", choices=["linear", "min_jerk", "geodesic"], default="min_jerk")
     return p
 
 
@@ -64,6 +70,7 @@ async def main_async() -> int:
             "waypoint_add",
             {
                 "id": args.id,
+                "label": args.label,
                 "pose": {
                     "x": args.x,
                     "y": args.y,
@@ -82,6 +89,7 @@ async def main_async() -> int:
             "waypoint_update",
             {
                 "id": args.id,
+                "label": args.label,
                 "pose": {
                     "x": args.x,
                     "y": args.y,
@@ -101,6 +109,13 @@ async def main_async() -> int:
             args.url,
             "sim_run_waypoints",
             {"from_id": args.from_id, "to_id": args.to_id, "duration_s": args.duration_s, "profile": args.profile},
+        )
+    elif args.cmd == "run-seq":
+        ids = [x.strip() for x in str(args.ids).split(",") if x.strip()]
+        resp = await ws_request(
+            args.url,
+            "sim_run_sequence",
+            {"ids": ids, "duration_s": args.duration_s, "profile": args.profile},
         )
     elif args.cmd == "stop":
         resp = await ws_request(args.url, "sim_stop", {})

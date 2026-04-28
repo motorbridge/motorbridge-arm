@@ -15,6 +15,7 @@ Gateway entry:
 - `waypoint_clear`
 - `waypoint_list`
 - `sim_run_waypoints`
+- `sim_run_sequence`
 - `sim_stop`
 - `bus_config`
 - `bus_snapshot`
@@ -26,7 +27,7 @@ Gateway entry:
 - state includes:
   - `joint_targets`
   - `pose`
-  - `waypoints`
+  - `waypoints` (`id -> {label, x, y, z, roll, pitch, yaw}`)
   - `motion` (`running/name/from_id/to_id`)
 
 ## Dual-buffer bus design
@@ -63,9 +64,10 @@ You can test waypoint workflow from terminal:
 
 ```bash
 python scripts/simu_ws_cli.py state
-python scripts/simu_ws_cli.py waypoint-add --id P1 --x 0.30 --y 0.00 --z 0.22
-python scripts/simu_ws_cli.py waypoint-add --id P2 --x 0.28 --y 0.12 --z 0.24
+python scripts/simu_ws_cli.py waypoint-add --id P1 --label "Pick point" --x 0.30 --y 0.00 --z 0.22
+python scripts/simu_ws_cli.py waypoint-add --id P2 --label "Place point" --x 0.28 --y 0.12 --z 0.24
 python scripts/simu_ws_cli.py waypoint-list
-python scripts/simu_ws_cli.py run --from-id P1 --to-id P2 --duration-s 2.0
+python scripts/simu_ws_cli.py run --from-id P1 --to-id P2 --duration-s 2.0 --profile geodesic
+python scripts/simu_ws_cli.py run-seq --ids P1,P3,P2 --duration-s 1.8 --profile min_jerk
 python scripts/simu_ws_cli.py stop
 ```
