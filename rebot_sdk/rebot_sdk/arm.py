@@ -7,6 +7,8 @@ import time
 from .calibration.zeroing import ZeroCalibrator
 from .motion.executor import JointMotionExecutor
 from .motion.planner import ArcSpec, estimate_steps, interpolate_joint_linear, interpolate_pose_circular, interpolate_pose_geodesic, interpolate_pose_linear
+from .trajectory.clik_tracker import IKParams
+from .trajectory.trajectory_planner import plan_joint_space_trajectory
 from .params.registry import ParamRegistry, create_default_registry
 from .runtime import RuntimeStateMachine
 from .safety.supervisor import SafetySupervisor
@@ -247,15 +249,45 @@ class Arm:
         profile_name = profile or self._cfg.motion_profile
         dist = ((target.x - start.x) ** 2 + (target.y - start.y) ** 2 + (target.z - start.z) ** 2) ** 0.5
         steps = max(2, int(dist / max(step_m, 1e-4)) + 1)
-        if profile_name.lower() == "geodesic":
-            poses = interpolate_pose_geodesic(start, target, steps, profile=profile_name)
-        else:
-            poses = interpolate_pose_linear(start, target, steps, profile=profile_name)
         q_now = self.get_joint_positions()
         joint_points: list[list[float]] = []
-        for pose in poses:
-            q_now = self._kin.inverse(pose, q_now)
-            joint_points.append(self._safety.clamp_joint_targets(q_now))
+
+        # Primary path: unified cartesian trajectory + CLIK tracking with joint-limit-aware null space.
+        if self._kin.has_pinocchio and self._kin._model is not None and self._kin._frame_id is not None:
+            try:
+                q_goal = self._safety.clamp_joint_targets(self._kin.inverse(target, q_now))
+                duration_s = max(self._cfg.loop_dt_s, (steps - 1) * self._cfg.loop_dt_s)
+                ik_params = IKParams(
+                    max_iter=200,
+                    tolerance=1e-4,
+                    damping=1e-6,
+                    step_size=0.8,
+                )
+                traj_points = plan_joint_space_trajectory(
+                    model=self._kin._model,
+                    end_frame_id=self._kin._frame_id,
+                    q_start=q_now,
+                    q_end=q_goal,
+                    duration=duration_s,
+                    kin=self._kin,
+                    ik_params=ik_params,
+                    null_gain=0.1,
+                    start_pose=start,
+                    end_pose=target,
+                )
+                joint_points = [self._safety.clamp_joint_targets(pt.q) for pt in traj_points]
+            except Exception:
+                joint_points = []
+
+        # Fallback path: per-waypoint IK.
+        if not joint_points:
+            if profile_name.lower() == "geodesic":
+                poses = interpolate_pose_geodesic(start, target, steps, profile=profile_name)
+            else:
+                poses = interpolate_pose_linear(start, target, steps, profile=profile_name)
+            for pose in poses:
+                q_now = self._kin.inverse(pose, q_now)
+                joint_points.append(self._safety.clamp_joint_targets(q_now))
         self._run_joint_points(joint_points, vlim=vlim, motion_name="move_l")
 
     def move_c(
