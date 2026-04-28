@@ -38,6 +38,7 @@ class ArmConfig:
     motion_profile: str = "linear"
     urdf_path: str | None = None
     ee_frame: str = "tool0"
+    gripper_joint: str | None = None
 
 
 @dataclass(slots=True)
@@ -59,6 +60,30 @@ class Pose6D:
     roll: float
     pitch: float
     yaw: float
+
+
+@dataclass(slots=True)
+class ToolConfig:
+    x: float = 0.0
+    y: float = 0.0
+    z: float = 0.0
+    roll: float = 0.0
+    pitch: float = 0.0
+    yaw: float = 0.0
+
+
+@dataclass(slots=True)
+class PayloadConfig:
+    mass: float = 0.0
+    cx: float = 0.0
+    cy: float = 0.0
+    cz: float = 0.0
+
+
+@dataclass(slots=True)
+class FaultState:
+    has_fault: bool
+    faulted_joints: list[str]
 
 
 @dataclass(slots=True)

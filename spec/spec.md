@@ -31,6 +31,12 @@ This ensures hardware control and model-based FK/IK share the same product defin
 - `Arm.read_param(joint_index, param_id, param_type=None)`
 - `Arm.write_param(joint_index, param_id, value, param_type=None)`
 - `Arm.zero_calibrate(scope="all"|"joint", joint_index=None)`
+- `Arm.set_tool(tool_cfg)`
+- `Arm.set_payload(payload_cfg)`
+- `Arm.get_faults()`
+- `Arm.clear_faults()`
+- `Arm.gripper_open(pos=..., vlim=...)`
+- `Arm.gripper_close(pos=..., vlim=...)`
 
 ## State Machine
 

@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from ..types import Pose6D
+from .inverse_kinematics import IKParams, IKResult, solve_ik_advanced
 
 
 def _rot_to_rpy(R) -> tuple[float, float, float]:
@@ -93,10 +94,20 @@ class Kinematics:
         if not q_seed:
             q_seed = [0.0] * 6
         if self._pin is not None:
-            q = self._inverse_pinocchio(target, q_seed)
+            r = self.inverse_result(target, q_seed)
+            if r.success:
+                return r.q
+        return self._inverse_simple(target, q_seed)
+
+    def inverse_result(self, target: Pose6D, q_seed: list[float]) -> IKResult:
+        if not q_seed:
+            q_seed = [0.0] * 6
+        if self._pin is not None:
+            q = self._inverse_pinocchio_result(target, q_seed)
             if q is not None:
                 return q
-        return self._inverse_simple(target, q_seed)
+        q_fb = self._inverse_simple(target, q_seed)
+        return IKResult(q=q_fb, success=False, error=float("inf"), iterations=0)
 
     def _inverse_simple(self, target: Pose6D, q_seed: list[float]) -> list[float]:
         out = list(q_seed)
@@ -106,7 +117,7 @@ class Kinematics:
             out[2] = max(-2.6, min(2.6, (target.x - 0.2) * 2.0 - out[1]))
         return out
 
-    def _inverse_pinocchio(self, target: Pose6D, q_seed: list[float]) -> list[float] | None:
+    def _inverse_pinocchio_result(self, target: Pose6D, q_seed: list[float]) -> IKResult | None:
         try:
             import numpy as np
         except Exception:
@@ -127,22 +138,13 @@ class Kinematics:
         )
         T_target = pin.SE3(R, np.array([target.x, target.y, target.z], dtype=float))
 
-        for _ in range(120):
-            pin.forwardKinematics(model, data, q)
-            pin.updateFramePlacements(model, data)
-            T_cur = data.oMf[self._frame_id]
-            err = pin.log6(T_cur.inverse() * T_target).vector
-            if float(np.linalg.norm(err)) < 1e-4:
-                return [float(v) for v in q]
-
-            J = pin.computeFrameJacobian(model, data, q, self._frame_id, pin.ReferenceFrame.LOCAL)
-            lam = 1e-6
-            JJT = J @ J.T
-            JJT[np.diag_indices_from(JJT)] += lam
-            dq = 0.6 * J.T @ np.linalg.solve(JJT, err)
-            q = pin.integrate(model, q, dq)
-            lo = np.array([float(x) for x in model.lowerPositionLimit])
-            hi = np.array([float(x) for x in model.upperPositionLimit])
-            mask = np.isfinite(lo) & np.isfinite(hi)
-            q[mask] = np.clip(q[mask], lo[mask], hi[mask])
-        return None
+        res = solve_ik_advanced(
+            pin=pin,
+            model=model,
+            data=data,
+            frame_id=self._frame_id,
+            target_se3=T_target,
+            q_seed=[float(v) for v in q],
+            params=IKParams(),
+        )
+        return res

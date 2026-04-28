@@ -41,7 +41,7 @@ Required parity:
 - [x] IK runtime solve + arm end pose controller
 - [x] Cartesian trajectory (`move_l`)
 - [x] Circular trajectory (`move_c`)
-- [~] Trajectory strategy options (linear/min-jerk/geodesic)
+- [x] Trajectory strategy options (linear/min-jerk/geodesic)
 - [ ] Unified fault recovery workflow
 - [ ] Hardware-in-loop integration tests
 
@@ -65,17 +65,22 @@ Nice-to-have parity:
 ## Phase B - Controller Pipeline
 
 - [x] Add controller abstraction for high-level motion commands.
-- [ ] Implement `move_j` pipeline as planner -> safety gate -> executor.
+- [x] Implement `move_j` pipeline as planner -> safety gate -> executor.
 - [x] Introduce `move_l` pipeline (Cartesian interpolation to joint commands).
 - [x] Introduce `move_c` pipeline (arc constraints + discretization).
 - [ ] Add command cancellation and stop hooks.
 
 ## Phase C - Kinematics and Trajectory Upgrade
 
-- [ ] Replace current minimal IK fallback with robust Pinocchio-based solver path.
-- [~] Add trajectory profiles: linear, min-jerk, geodesic.
-- [ ] Add CLIK tracker option with joint-limit-aware null-space term.
-- [ ] Add trajectory stats (success rate, max/avg tracking error).
+- [x] Replace current minimal IK fallback with robust Pinocchio-based solver path.
+- [x] Add trajectory profiles: linear, min-jerk, geodesic.
+- [x] Add CLIK tracker option with joint-limit-aware null-space term.
+- [~] Add trajectory stats (success rate, max/avg tracking error).
+
+## Phase E - Advanced Packages
+
+- [x] Add independent `ArmEndPos` high-level controller.
+- [x] Add dynamics subpackage baseline (robot_model/inertia/inverse_dynamics/forward_dynamics/energy/centroidal/derivatives).
 
 ## Phase D - Productization and Multi-Arm Readiness
 

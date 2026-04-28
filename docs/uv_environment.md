@@ -34,18 +34,21 @@ uv sync --extra kinematics
 uv run python -c "import motorbridge; print('motorbridge OK')"
 uv run python -c "import pinocchio as pin; print('pinocchio OK', pin.__version__)"
 uv run pytest -q
+uv run python scripts/verify_env.py --require-pinocchio
 ```
 
 ## 4) Dependency maintenance rules
 
 - Keep `motorbridge` as the only motor/bus control substrate.
 - Add new packages via `pyproject.toml` only.
+- Commit `uv.lock` together with any dependency change.
 - When changing dependency versions, rerun:
 
 ```bash
 uv lock
 uv sync --extra full --extra dev
 uv run pytest -q
+uv run python scripts/verify_env.py --require-pinocchio
 ```
 
 ## 5) Recommended daily commands

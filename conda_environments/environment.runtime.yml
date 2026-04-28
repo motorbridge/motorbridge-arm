@@ -1,0 +1,10 @@
+name: motorbridge-arm-runtime
+channels:
+  - conda-forge
+dependencies:
+  - python=3.11
+  - pip
+  - pip:
+      - motorbridge>=0.2.4
+      - pyyaml>=6.0
+      - -e .

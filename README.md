@@ -26,6 +26,8 @@ If you already cloned into another folder, just `cd <your-path>/motorbridge-arm`
 Environment and dependency maintenance:
 
 - [UV guide](docs/uv_environment.md)
+- [Conda guide](docs/conda_environment.md)
+- [Environment policy](docs/environment_policy.md)
 
 ## Layout
 
@@ -38,7 +40,7 @@ Environment and dependency maintenance:
 ## Model and Pinocchio
 
 - Default product model:
-  - `models/urdf/rebot_arm_robstride.urdf`
+  - `models/urdf/reBot-DevArm_fixend_description/urdf/reBot-DevArm_fixend.urdf`
 - Profile binding:
   - `rebot_sdk/model/profiles.py` injects `urdf_path` and `ee_frame` into `ArmConfig`
 - Kinematics:

@@ -12,7 +12,14 @@ def rebot_arm_robstride(channel: str = "can0") -> ArmConfig:
         for i in range(1, 7)
     ]
     repo_root = Path(__file__).resolve().parents[3]
-    urdf_path = str(repo_root / "models" / "urdf" / "rebot_arm_robstride.urdf")
+    urdf_path = str(
+        repo_root
+        / "models"
+        / "urdf"
+        / "reBot-DevArm_fixend_description"
+        / "urdf"
+        / "reBot-DevArm_fixend.urdf"
+    )
     return ArmConfig(
         name="rebot-arm-robstride",
         model="rebot-arm-robstride",

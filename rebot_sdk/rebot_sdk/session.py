@@ -90,12 +90,70 @@ class MotorBridgeSession:
                 err_code=ArmErrorCode.ERR_MODE,
             )
 
+    def ensure_mode_joint(self, index: int, mode: int, timeout_ms: int = 1000) -> None:
+        h = self._joints[index]
+        self._retry_call(
+            lambda: h.motor.ensure_mode(mode, timeout_ms),
+            op_name=f"ensure_mode({h.config.name})",
+            err_code=ArmErrorCode.ERR_MODE,
+        )
+
     def set_pos_vel_all(self, q: list[float], vlim: float) -> None:
         if len(q) != len(self._joints):
             raise ArmError(ArmErrorCode.ERR_CONFIG, "q length mismatch")
         for target, h in zip(q, self._joints):
             motor_target = target * h.config.direction + h.config.zero_offset
             h.motor.send_pos_vel(float(motor_target), float(vlim))
+
+    def set_vel_all(self, vel: list[float]) -> None:
+        if len(vel) != len(self._joints):
+            raise ArmError(ArmErrorCode.ERR_CONFIG, "vel length mismatch")
+        for target, h in zip(vel, self._joints):
+            motor_vel = target * h.config.direction
+            h.motor.send_vel(float(motor_vel))
+
+    def set_mit_all(self, pos: list[float], vel: list[float], kp: list[float], kd: list[float], tau: list[float] | None = None) -> None:
+        n = len(self._joints)
+        if not (len(pos) == len(vel) == len(kp) == len(kd) == n):
+            raise ArmError(ArmErrorCode.ERR_CONFIG, "mit vector length mismatch")
+        if tau is None:
+            tau = [0.0] * n
+        if len(tau) != n:
+            raise ArmError(ArmErrorCode.ERR_CONFIG, "tau length mismatch")
+        for i, h in enumerate(self._joints):
+            motor_pos = pos[i] * h.config.direction + h.config.zero_offset
+            motor_vel = vel[i] * h.config.direction
+            motor_tau = tau[i] * h.config.direction
+            h.motor.send_mit(float(motor_pos), float(motor_vel), float(kp[i]), float(kd[i]), float(motor_tau))
+
+    def set_pos_vel_joint(self, index: int, q_target: float, vlim: float) -> None:
+        h = self._joints[index]
+        motor_target = q_target * h.config.direction + h.config.zero_offset
+        self._retry_call(
+            lambda: h.motor.send_pos_vel(float(motor_target), float(vlim)),
+            op_name=f"send_pos_vel({h.config.name})",
+            err_code=ArmErrorCode.ERR_TIMEOUT,
+        )
+
+    def set_vel_joint(self, index: int, vel: float) -> None:
+        h = self._joints[index]
+        motor_vel = vel * h.config.direction
+        self._retry_call(
+            lambda: h.motor.send_vel(float(motor_vel)),
+            op_name=f"send_vel({h.config.name})",
+            err_code=ArmErrorCode.ERR_TIMEOUT,
+        )
+
+    def set_mit_joint(self, index: int, pos: float, vel: float, kp: float, kd: float, tau: float = 0.0) -> None:
+        h = self._joints[index]
+        motor_pos = pos * h.config.direction + h.config.zero_offset
+        motor_vel = vel * h.config.direction
+        motor_tau = tau * h.config.direction
+        self._retry_call(
+            lambda: h.motor.send_mit(float(motor_pos), float(motor_vel), float(kp), float(kd), float(motor_tau)),
+            op_name=f"send_mit({h.config.name})",
+            err_code=ArmErrorCode.ERR_TIMEOUT,
+        )
 
     def request_feedback_all(self) -> None:
         for h in self._joints:
@@ -121,6 +179,14 @@ class MotorBridgeSession:
     def set_zero_all(self) -> None:
         for i in range(len(self._joints)):
             self.set_zero_joint(i)
+
+    def clear_fault_all(self) -> None:
+        for h in self._joints:
+            self._retry_call(
+                lambda hh=h: hh.motor.clear_error(),
+                op_name=f"clear_error({h.config.name})",
+                err_code=ArmErrorCode.ERR_MODE,
+            )
 
     def set_param(self, index: int, param_id: int, param_type: str, value: int | float) -> None:
         h = self._joints[index]

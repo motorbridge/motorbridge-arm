@@ -1,4 +1,4 @@
-from rebot_sdk.motion.planner import ArcSpec, interpolate_joint_linear, interpolate_pose_circular, interpolate_pose_linear
+from rebot_sdk.motion.planner import ArcSpec, interpolate_joint_linear, interpolate_pose_circular, interpolate_pose_geodesic, interpolate_pose_linear
 from rebot_sdk.types import Pose6D
 
 
@@ -39,3 +39,14 @@ def test_geodesic_profile_pose_endpoints():
     pts = interpolate_pose_linear(a, b, 7, profile="geodesic")
     assert pts[0] == a
     assert pts[-1] == b
+
+
+def test_geodesic_interpolation_endpoints():
+    a = Pose6D(0.0, 0.0, 0.0, 0.0, 0.0, 0.0)
+    b = Pose6D(0.1, 0.2, 0.3, 0.2, -0.1, 0.4)
+    pts = interpolate_pose_geodesic(a, b, 6, profile="geodesic")
+    assert len(pts) == 6
+    assert abs(pts[0].x - a.x) < 1e-9
+    assert abs(pts[0].y - a.y) < 1e-9
+    assert abs(pts[-1].x - b.x) < 1e-9
+    assert abs(pts[-1].y - b.y) < 1e-9
