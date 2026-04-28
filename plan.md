@@ -75,7 +75,9 @@ Nice-to-have parity:
 - [x] Replace current minimal IK fallback with robust Pinocchio-based solver path.
 - [x] Add trajectory profiles: linear, min-jerk, geodesic.
 - [x] Add CLIK tracker option with joint-limit-aware null-space term.
-- [~] Add trajectory stats (success rate, max/avg tracking error).
+- [x] Add trajectory stats (success rate, max/avg tracking error).
+- [x] Add unified trajectory pipeline modules:
+  `trajectory/sampler.py`, `trajectory/clik_tracker.py`, `trajectory/trajectory_planner.py`.
 
 ## Phase E - Advanced Packages
 

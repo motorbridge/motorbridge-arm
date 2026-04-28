@@ -3,8 +3,10 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from ..types import Pose6D
-from .planner import interpolate_pose_geodesic
-from .stats import TrajectoryStats, compute_trajectory_stats
+from ..trajectory.clik_tracker import IKParams as _IKParams
+from ..trajectory.clik_tracker import track_trajectory
+from ..trajectory.sampler import TrajPlanParams, plan_cartesian_geodesic_trajectory
+from ..trajectory.trajectory_planner import compute_traj_stats
 
 
 @dataclass(slots=True)
@@ -24,91 +26,37 @@ class JointTrajectoryPoint:
 
 
 def plan_se3_geodesic(start: Pose6D, end: Pose6D, duration_s: float, dt_s: float = 0.02) -> list[Pose6D]:
-    n = max(2, int(duration_s / max(dt_s, 1e-4)) + 1)
-    return interpolate_pose_geodesic(start, end, n, profile="geodesic")
+    res = plan_cartesian_geodesic_trajectory(start, end, duration_s, params=TrajPlanParams(dt=dt_s))
+    return [p.pose for p in res.trajectory.points()]
 
 
 def track_with_clik(model, end_frame_id: int, poses: list[Pose6D], q0: list[float], kin, params: CliKParams | None = None) -> list[JointTrajectoryPoint]:
-    if params is None:
-        params = CliKParams()
-    out: list[JointTrajectoryPoint] = []
-    q = list(q0)
-    if len(poses) <= 1:
-        return [JointTrajectoryPoint(time=0.0, q=q, ik_success=True)]
-    dt = 1.0 / (len(poses) - 1)
+    p = params or CliKParams()
+    class _Pt:
+        def __init__(self, t: float, pose: Pose6D) -> None:
+            self.time = t
+            self.pose = pose
 
-    pin = getattr(kin, "_pin", None)
-    if pin is None or model is None:
-        # fallback path: per-waypoint IK
-        for i, p in enumerate(poses):
-            qn = kin.inverse(p, q)
-            ok = len(qn) == len(q)
-            q = list(qn)
-            out.append(JointTrajectoryPoint(time=i * dt, q=list(q), ik_success=ok))
-        return out
+    class _Cart:
+        def __init__(self, points: list[_Pt]) -> None:
+            self._points = points
 
-    import numpy as np
+        def points(self) -> list[_Pt]:
+            return self._points
 
-    data = model.createData()
-    qv = np.array(q, dtype=float)
-    nq = model.nq
-    if len(qv) < nq:
-        qq = np.zeros(nq, dtype=float)
-        qq[: len(qv)] = qv
-        qv = qq
-
-    def _joint_limit_grad(model_, q_):
-        lo = np.array([float(x) for x in model_.lowerPositionLimit])
-        hi = np.array([float(x) for x in model_.upperPositionLimit])
-        valid = np.isfinite(lo) & np.isfinite(hi)
-        dl = q_ - lo
-        dh = hi - q_
-        mask = valid & (dl > 1e-6) & (dh > 1e-6)
-        g = np.zeros(model_.nv)
-        g[mask] = (dh[mask] - dl[mask]) / (dl[mask] * dh[mask])
-        return g
-
-    def _clamp_config(model_, q_):
-        lo = np.array([float(x) if np.isfinite(x) else 0.0 for x in model_.lowerPositionLimit])
-        hi = np.array([float(x) if np.isfinite(x) else 0.0 for x in model_.upperPositionLimit])
-        qc = q_.copy()
-        valid = np.isfinite(qc) & (lo <= hi)
-        qc[valid] = np.clip(qc[valid], lo[valid], hi[valid])
-        return qc
-
-    for i, p in enumerate(poses):
-        R = (
-            pin.utils.rotate("x", p.roll)
-            @ pin.utils.rotate("y", p.pitch)
-            @ pin.utils.rotate("z", p.yaw)
-        )
-        T_target = pin.SE3(R, np.array([p.x, p.y, p.z], dtype=float))
-        converged = False
-        for _ in range(params.max_iter):
-            pin.computeJointJacobians(model, data, qv)
-            pin.updateFramePlacements(model, data)
-            oMf = data.oMf[end_frame_id]
-            err = pin.log6(oMf.inverse() * T_target).vector
-            if float(np.linalg.norm(err)) < params.tolerance:
-                converged = True
-                break
-
-            J = pin.getFrameJacobian(model, data, end_frame_id, pin.ReferenceFrame.LOCAL)
-            err_norm = float(np.linalg.norm(err))
-            lam = params.damping * max(1.0, err_norm * 10.0)
-            JJT = J @ J.T
-            JJT[np.diag_indices_from(JJT)] += lam
-            dq = params.step_size * J.T @ np.linalg.solve(JJT, err)
-
-            if params.null_gain > 0.0:
-                g = _joint_limit_grad(model, qv)
-                dq += params.null_gain * (g - J.T @ np.linalg.solve(JJT, J @ g))
-
-            qv = _clamp_config(model, pin.integrate(model, qv, dq))
-
-        out.append(JointTrajectoryPoint(time=i * dt, q=[float(v) for v in qv], ik_success=converged))
-    return out
+    denom = max(len(poses) - 1, 1)
+    cart = _Cart([_Pt(i / denom, pose) for i, pose in enumerate(poses)])
+    out = track_trajectory(
+        model=model,
+        end_frame_id=end_frame_id,
+        traj=cart,
+        q_init=q0,
+        kin=kin,
+        ik_params=_IKParams(max_iter=p.max_iter, tolerance=p.tolerance, damping=p.damping, step_size=p.step_size),
+        null_gain=p.null_gain,
+    )
+    return [JointTrajectoryPoint(time=x.time, q=list(x.q), ik_success=bool(x.ik_success)) for x in out]
 
 
-def compute_geodesic_stats(reference: list[Pose6D], actual: list[Pose6D], success_flags: list[bool] | None = None) -> TrajectoryStats:
-    return compute_trajectory_stats(reference, actual, success_flags=success_flags)
+def compute_geodesic_stats(reference: list[Pose6D], actual: list[Pose6D], success_flags: list[bool] | None = None):
+    return compute_traj_stats(reference, actual, success_flags=success_flags)

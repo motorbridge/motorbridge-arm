@@ -3,7 +3,9 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from ..arm import Arm
-from ..motion.geodesic import CliKParams, compute_geodesic_stats, plan_se3_geodesic, track_with_clik
+from ..motion.geodesic import compute_geodesic_stats, plan_se3_geodesic
+from ..trajectory.clik_tracker import IKParams
+from ..trajectory.trajectory_planner import plan_joint_space_trajectory
 from ..types import Pose6D
 
 
@@ -30,13 +32,16 @@ class ArmEndPos:
         start = self.arm.get_pose()
         ref = plan_se3_geodesic(start, target, duration_s=duration_s, dt_s=self.arm._cfg.loop_dt_s)
         q0 = self.arm.get_joint_positions()
-        jt = track_with_clik(
+        q1 = self.arm.solve_ik(target)
+        jt = plan_joint_space_trajectory(
             model=self.arm._kin._model,
             end_frame_id=self.arm._kin._frame_id if self.arm._kin._frame_id is not None else 0,
-            poses=ref,
-            q0=q0,
+            q_start=q0,
+            q_end=q1,
+            duration=duration_s,
             kin=self.arm._kin,
-            params=CliKParams(),
+            ik_params=IKParams(),
+            null_gain=0.1,
         )
         self.arm._run_joint_points([p.q for p in jt], vlim=vlim, motion_name="move_l_clik")
         actual = [self.arm._kin.forward(p.q) for p in jt]
