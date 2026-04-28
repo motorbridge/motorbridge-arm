@@ -9,7 +9,7 @@ class StateCache:
     def __init__(self, config: ArmConfig) -> None:
         self._cfg = config
         self._state = ArmState(
-            run_state=ArmRunState.IDLE,
+            run_state=ArmRunState.DISCONNECTED,
             joints=[JointState(name=j.name, pos=None, vel=None, torq=None) for j in config.joints],
             updated_at_s=time.time(),
         )

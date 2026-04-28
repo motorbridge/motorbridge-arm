@@ -35,6 +35,7 @@ class ArmConfig:
     joints: list[JointConfig]
     default_home: list[float] = field(default_factory=list)
     loop_dt_s: float = 0.02
+    motion_profile: str = "linear"
     urdf_path: str | None = None
     ee_frame: str = "tool0"
 

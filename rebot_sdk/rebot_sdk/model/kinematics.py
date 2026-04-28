@@ -90,18 +90,59 @@ class Kinematics:
         return Pose6D(x=float(t[0]), y=float(t[1]), z=float(t[2]), roll=roll, pitch=pitch, yaw=yaw)
 
     def inverse(self, target: Pose6D, q_seed: list[float]) -> list[float]:
-        # Fallback numeric-light strategy:
-        # - if pinocchio available: keep seed and set wrist yaw to target yaw.
-        # - else: simple chain approximation.
         if not q_seed:
             q_seed = [0.0] * 6
-        out = list(q_seed)
         if self._pin is not None:
-            if out:
-                out[0] = target.yaw
-            return out
+            q = self._inverse_pinocchio(target, q_seed)
+            if q is not None:
+                return q
+        return self._inverse_simple(target, q_seed)
+
+    def _inverse_simple(self, target: Pose6D, q_seed: list[float]) -> list[float]:
+        out = list(q_seed)
         if len(out) >= 3:
             out[0] = target.yaw
             out[1] = max(-2.6, min(2.6, (target.z - 0.10) * 2.0))
             out[2] = max(-2.6, min(2.6, (target.x - 0.2) * 2.0 - out[1]))
         return out
+
+    def _inverse_pinocchio(self, target: Pose6D, q_seed: list[float]) -> list[float] | None:
+        try:
+            import numpy as np
+        except Exception:
+            return None
+
+        pin = self._pin
+        model = self._model
+        data = self._data
+        nq = model.nq
+        q = np.zeros(nq)
+        n = min(nq, len(q_seed))
+        q[:n] = np.array(q_seed[:n], dtype=float)
+
+        R = (
+            pin.utils.rotate("x", target.roll)
+            @ pin.utils.rotate("y", target.pitch)
+            @ pin.utils.rotate("z", target.yaw)
+        )
+        T_target = pin.SE3(R, np.array([target.x, target.y, target.z], dtype=float))
+
+        for _ in range(120):
+            pin.forwardKinematics(model, data, q)
+            pin.updateFramePlacements(model, data)
+            T_cur = data.oMf[self._frame_id]
+            err = pin.log6(T_cur.inverse() * T_target).vector
+            if float(np.linalg.norm(err)) < 1e-4:
+                return [float(v) for v in q]
+
+            J = pin.computeFrameJacobian(model, data, q, self._frame_id, pin.ReferenceFrame.LOCAL)
+            lam = 1e-6
+            JJT = J @ J.T
+            JJT[np.diag_indices_from(JJT)] += lam
+            dq = 0.6 * J.T @ np.linalg.solve(JJT, err)
+            q = pin.integrate(model, q, dq)
+            lo = np.array([float(x) for x in model.lowerPositionLimit])
+            hi = np.array([float(x) for x in model.upperPositionLimit])
+            mask = np.isfinite(lo) & np.isfinite(hi)
+            q[mask] = np.clip(q[mask], lo[mask], hi[mask])
+        return None

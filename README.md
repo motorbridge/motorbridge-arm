@@ -17,14 +17,15 @@ This repository targets the product form layer:
 ```bash
 git clone https://github.com/motorbridge/motorbridge-arm.git
 cd motorbridge-arm
-python -m venv .venv
-source .venv/bin/activate
-pip install -U pip
-pip install -e .
-python examples/00_session_smoke.py --channel can0
+uv sync --extra full --extra dev
+uv run python examples/00_session_smoke.py --channel can0
 ```
 
 If you already cloned into another folder, just `cd <your-path>/motorbridge-arm` first.
+
+Environment and dependency maintenance:
+
+- [UV guide](docs/uv_environment.md)
 
 ## Layout
 

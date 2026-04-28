@@ -2,20 +2,29 @@ from __future__ import annotations
 
 from .calibration.zeroing import ZeroCalibrator
 from .motion.executor import JointMotionExecutor
-from .motion.planner import estimate_steps
+from .motion.planner import ArcSpec, estimate_steps, interpolate_joint_linear, interpolate_pose_circular, interpolate_pose_linear
 from .params.registry import ParamRegistry, create_default_registry
+from .runtime import RuntimeStateMachine
 from .safety.supervisor import SafetySupervisor
 from .session import ModeLike, MotorBridgeSession
 from .telemetry.recorder import Recorder
 from .telemetry.state_cache import StateCache
 from .types import ArmConfig, ArmRunState, ArmState, JointState, Pose6D
 from .model.kinematics import Kinematics
+from .vendors import MotorAdapterRegistry, create_default_adapter_registry
 
 
 class Arm:
-    def __init__(self, config: ArmConfig, registry: ParamRegistry | None = None) -> None:
+    def __init__(
+        self,
+        config: ArmConfig,
+        registry: ParamRegistry | None = None,
+        adapter_registry: MotorAdapterRegistry | None = None,
+    ) -> None:
         self._cfg = config
-        self._session = MotorBridgeSession(config.channel)
+        self._runtime = RuntimeStateMachine(ArmRunState.DISCONNECTED)
+        self._adapter_registry = adapter_registry or create_default_adapter_registry()
+        self._session = MotorBridgeSession(config.channel, adapter_registry=self._adapter_registry)
         self._safety = SafetySupervisor(config)
         self._cache = StateCache(config)
         self._executor = JointMotionExecutor(config.loop_dt_s)
@@ -25,6 +34,7 @@ class Arm:
         self._recorder = Recorder()
 
     def connect(self) -> None:
+        self._runtime.transition(ArmRunState.IDLE)
         self._session.connect()
         for j in self._cfg.joints:
             self._session.add_joint(j)
@@ -32,19 +42,25 @@ class Arm:
         self._recorder.add("connect", {"channel": self._cfg.channel, "joints": len(self._cfg.joints)})
 
     def close(self) -> None:
+        self._runtime.force(ArmRunState.DISCONNECTED)
         self._session.close()
         self._cache.update_run_state(ArmRunState.DISCONNECTED)
 
     def enable(self) -> None:
+        self._runtime.transition(ArmRunState.ENABLED)
         self._session.enable_all()
         self._cache.update_run_state(ArmRunState.ENABLED)
 
     def disable(self) -> None:
+        if self._runtime.state == ArmRunState.RUNNING:
+            self._runtime.transition(ArmRunState.ENABLED)
+        self._runtime.transition(ArmRunState.IDLE)
         self._session.disable_all()
         self._cache.update_run_state(ArmRunState.IDLE)
 
     def estop(self) -> None:
         self._session.disable_all()
+        self._runtime.force(ArmRunState.FAULT)
         self._cache.update_run_state(ArmRunState.FAULT)
 
     def refresh_state(self) -> ArmState:
@@ -82,21 +98,56 @@ class Arm:
         q = self.get_joint_positions()
         return self._kin.forward(q)
 
-    def move_j(self, q_target: list[float], vlim: float = 1.0) -> None:
+    def move_j(self, q_target: list[float], vlim: float = 1.0, profile: str | None = None) -> None:
         q_target = self._safety.clamp_joint_targets(q_target)
-        vlim = self._safety.validate_velocity_limit(vlim)
-        q_now = self.get_joint_positions()
-        steps = estimate_steps(q_now, q_target)
-        points = self._executor.interpolate_linear(q_now, q_target, steps)
-        self._session.ensure_mode_all(ModeLike.POS_VEL)
-        self._cache.update_run_state(ArmRunState.RUNNING)
-        self._executor.run(points, self._session.set_pos_vel_all, vlim)
-        self._cache.update_run_state(ArmRunState.ENABLED)
-        self._recorder.add("move_j", {"steps": steps, "vlim": vlim})
+        self._run_joint_target(q_target, vlim=vlim, profile=profile or self._cfg.motion_profile)
 
     def home(self, vlim: float = 1.0) -> None:
         home = self._cfg.default_home or [0.0 for _ in self._cfg.joints]
         self.move_j(home, vlim=vlim)
+
+    def solve_ik(self, target: Pose6D) -> list[float]:
+        q_now = self.get_joint_positions()
+        q = self._kin.inverse(target, q_now)
+        q = self._safety.clamp_joint_targets(q)
+        return q
+
+    def move_l(self, target: Pose6D, vlim: float = 1.0, step_m: float = 0.01, profile: str | None = None) -> None:
+        start = self.get_pose()
+        dist = ((target.x - start.x) ** 2 + (target.y - start.y) ** 2 + (target.z - start.z) ** 2) ** 0.5
+        steps = max(2, int(dist / max(step_m, 1e-4)) + 1)
+        poses = interpolate_pose_linear(start, target, steps, profile=profile or self._cfg.motion_profile)
+        q_now = self.get_joint_positions()
+        joint_points: list[list[float]] = []
+        for pose in poses:
+            q_now = self._kin.inverse(pose, q_now)
+            joint_points.append(self._safety.clamp_joint_targets(q_now))
+        self._run_joint_points(joint_points, vlim=vlim, motion_name="move_l")
+
+    def move_c(
+        self,
+        target: Pose6D,
+        center_x: float,
+        center_y: float,
+        normal_z: float = 1.0,
+        vlim: float = 1.0,
+        steps: int = 80,
+        profile: str | None = None,
+    ) -> None:
+        start = self.get_pose()
+        poses = interpolate_pose_circular(
+            start,
+            target,
+            ArcSpec(center_x=center_x, center_y=center_y, normal_z=normal_z),
+            steps,
+            profile=profile or self._cfg.motion_profile,
+        )
+        q_now = self.get_joint_positions()
+        joint_points: list[list[float]] = []
+        for pose in poses:
+            q_now = self._kin.inverse(pose, q_now)
+            joint_points.append(self._safety.clamp_joint_targets(q_now))
+        self._run_joint_points(joint_points, vlim=vlim, motion_name="move_c")
 
     def read_param(self, joint_index: int, param_id: int, param_type: str | None = None, timeout_ms: int = 1000):
         spec = self._registry.get(self._cfg.joints[joint_index].vendor, param_id)
@@ -123,3 +174,24 @@ class Arm:
 
     def save_trace(self, path: str) -> None:
         self._recorder.save_json(path)
+
+    def _run_joint_target(self, q_target: list[float], vlim: float, profile: str = "linear") -> None:
+        vlim = self._safety.validate_velocity_limit(vlim)
+        q_now = self.get_joint_positions()
+        steps = estimate_steps(q_now, q_target)
+        points = interpolate_joint_linear(q_now, q_target, steps, profile=profile)
+        self._run_joint_points(points, vlim=vlim, motion_name="move_j", steps=steps)
+
+    def _run_joint_points(self, points: list[list[float]], vlim: float, motion_name: str, steps: int | None = None) -> None:
+        self._runtime.transition(ArmRunState.RUNNING)
+        self._session.ensure_mode_all(ModeLike.POS_VEL)
+        self._cache.update_run_state(ArmRunState.RUNNING)
+        try:
+            self._executor.run(points, self._session.set_pos_vel_all, vlim)
+        finally:
+            self._runtime.transition(ArmRunState.ENABLED)
+            self._cache.update_run_state(ArmRunState.ENABLED)
+        payload = {"vlim": vlim, "points": len(points)}
+        if steps is not None:
+            payload["steps"] = steps
+        self._recorder.add(motion_name, payload)

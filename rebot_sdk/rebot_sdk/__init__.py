@@ -11,6 +11,7 @@ __all__ = [
     "Pose6D",
     "Arm",
     "SimArm",
+    "ArmController",
 ]
 
 
@@ -23,4 +24,8 @@ def __getattr__(name: str):
         from .sim import SimArm
 
         return SimArm
+    if name == "ArmController":
+        from .controllers import ArmController
+
+        return ArmController
     raise AttributeError(name)
