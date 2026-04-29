@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import time
 from dataclasses import dataclass
 from enum import IntEnum
@@ -7,6 +8,8 @@ from enum import IntEnum
 from .errors import ArmError, ArmErrorCode
 from .types import JointConfig
 from .vendors import MotorAdapterRegistry, create_default_adapter_registry
+
+logger = logging.getLogger(__name__)
 
 
 class ModeLike(IntEnum):
@@ -50,15 +53,25 @@ class MotorBridgeSession:
         if self._controller is not None:
             try:
                 self.disable_all()
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.warning("disable_all() during close failed: %s", exc)
             try:
                 self._controller.shutdown()
-            except Exception:
-                pass
-            self._controller.close()
+            except Exception as exc:
+                logger.warning("controller.shutdown() during close failed: %s", exc)
+            try:
+                self._controller.close()
+            except Exception as exc:
+                logger.warning("controller.close() during close failed: %s", exc)
             self._controller = None
         self._joints.clear()
+
+    def __enter__(self) -> "MotorBridgeSession":
+        self.connect()
+        return self
+
+    def __exit__(self, *args) -> None:
+        self.close()
 
     def add_joint(self, joint: JointConfig) -> None:
         if self._controller is None:
@@ -76,6 +89,30 @@ class MotorBridgeSession:
         if self._controller is None:
             raise ArmError(ArmErrorCode.ERR_STATE, "controller not connected")
         self._controller.enable_all()
+
+    def enable_all_with_poll(self, timeout_ms: int = 5000, poll_interval_ms: int = 100) -> list[str]:
+        """Enable all joints and poll until each reports status_code == 1 (enabled).
+
+        Returns a list of joint names that did NOT reach enabled state within
+        the timeout.
+        """
+        self._controller.enable_all()
+        deadline = time.monotonic() + timeout_ms / 1000.0
+        not_ready = {h.config.name for h in self._joints}
+        while not_ready and time.monotonic() < deadline:
+            time.sleep(poll_interval_ms / 1000.0)
+            for h in self._joints:
+                if h.config.name in not_ready:
+                    try:
+                        h.motor.request_feedback()
+                        st = h.motor.get_state()
+                        if st is not None and getattr(st, "status_code", None) == 1:
+                            not_ready.discard(h.config.name)
+                    except Exception:
+                        pass
+        if not_ready:
+            logger.warning("enable_all_with_poll: joints not ready: %s", not_ready)
+        return list(not_ready)
 
     def disable_all(self) -> None:
         if self._controller is None:

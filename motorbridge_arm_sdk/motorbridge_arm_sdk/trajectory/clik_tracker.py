@@ -2,15 +2,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from ..model.inverse_kinematics import IKParams
 from ..types import Pose6D
-
-
-@dataclass(slots=True)
-class IKParams:
-    max_iter: int = 200
-    tolerance: float = 1e-4
-    damping: float = 1e-6
-    step_size: float = 0.8
 
 
 @dataclass(slots=True)

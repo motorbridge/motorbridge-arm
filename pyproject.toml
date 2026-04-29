@@ -39,6 +39,9 @@ package-dir = {"" = "motorbridge_arm_sdk"}
 [tool.setuptools.packages.find]
 where = ["motorbridge_arm_sdk"]
 
+[tool.setuptools.package-data]
+motorbridge_arm_sdk = ["assets/**/*"]
+
 [tool.pytest.ini_options]
 pythonpath = ["motorbridge_arm_sdk"]
 testpaths = ["tests"]

@@ -1,7 +1,11 @@
 from __future__ import annotations
 
+import logging
+
 from ..errors import ArmError, ArmErrorCode
 from ..types import ArmRunState
+
+logger = logging.getLogger(__name__)
 
 
 class RuntimeStateMachine:
@@ -29,9 +33,11 @@ class RuntimeStateMachine:
                 ArmErrorCode.ERR_STATE,
                 f"invalid state transition: {self._state.value} -> {next_state.value}",
             )
+        logger.debug("state transition: %s -> %s", self._state.value, next_state.value)
         self._state = next_state
         return self._state
 
     def force(self, state: ArmRunState) -> ArmRunState:
+        logger.debug("state force: %s -> %s", self._state.value, state.value)
         self._state = state
         return self._state

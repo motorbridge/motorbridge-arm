@@ -2,11 +2,15 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import time
 from dataclasses import asdict
 from typing import Any
 
 from ..model.profiles import rebot_arm_robstride
+
+logger = logging.getLogger(__name__)
+
 from ..sim import SimArm
 from ..types import Pose6D
 from .protocol_bus import ProtocolBus
@@ -45,6 +49,7 @@ class SimuWsGateway:
 
     async def _handler(self, ws) -> None:
         self._clients.add(ws)
+        logger.info("client connected — %d clients total", len(self._clients))
         try:
             async for raw in ws:
                 try:
@@ -58,6 +63,7 @@ class SimuWsGateway:
                     await self._send_json(ws, resp)
         finally:
             self._clients.discard(ws)
+            logger.info("client disconnected — %d clients remaining", len(self._clients))
 
     async def _dispatch(self, req: dict[str, Any]) -> dict[str, Any] | None:
         op = str(req.get("op") or "")

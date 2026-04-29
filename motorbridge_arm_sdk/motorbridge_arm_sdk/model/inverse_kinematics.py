@@ -13,6 +13,7 @@ class IKParams:
     damping: float = 1e-6
     line_search_steps: int = 4
     retry_count: int = 8
+    null_gain: float = 0.0
 
 
 @dataclass(slots=True)

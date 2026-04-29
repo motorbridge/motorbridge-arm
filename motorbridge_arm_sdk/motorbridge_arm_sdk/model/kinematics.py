@@ -1,11 +1,14 @@
 from __future__ import annotations
 
+import logging
 import math
 from dataclasses import dataclass
 from pathlib import Path
 
 from ..types import Pose6D
 from .inverse_kinematics import IKParams, IKResult, solve_ik_advanced
+
+logger = logging.getLogger(__name__)
 
 
 def _rot_to_rpy(R) -> tuple[float, float, float]:
@@ -52,24 +55,42 @@ class Kinematics:
         try:
             import pinocchio as pin
         except Exception:
+            logger.warning("pinocchio not available; kinematics will use simplified chain fallback")
             return
         p = Path(urdf_path)
         if not p.exists():
+            logger.warning("URDF file not found: %s; kinematics will use simplified chain fallback", urdf_path)
             return
         model = pin.buildModelFromUrdf(str(p))
         data = model.createData()
+        resolved_frame = ee_frame
         if ee_frame not in [f.name for f in model.frames]:
-            ee_frame = model.frames[-1].name
-        frame_id = model.getFrameId(ee_frame)
+            resolved_frame = model.frames[-1].name
+            logger.warning(
+                "Requested ee_frame '%s' not found in URDF; falling back to '%s'",
+                ee_frame, resolved_frame,
+            )
+        frame_id = model.getFrameId(resolved_frame)
         self._pin = pin
         self._model = model
         self._data = data
         self._frame_id = frame_id
-        self._ee_frame = ee_frame
+        self._ee_frame = resolved_frame
+        logger.info("Loaded Pinocchio model from %s with ee_frame='%s' (frame_id=%d)", urdf_path, resolved_frame, frame_id)
 
     @property
     def has_pinocchio(self) -> bool:
         return self._pin is not None
+
+    @property
+    def pinocchio_model(self):
+        """The loaded Pinocchio model, or ``None`` if Pinocchio is unavailable."""
+        return self._model
+
+    @property
+    def end_frame_id(self) -> int | None:
+        """The resolved end-effector frame ID, or ``None`` if not loaded."""
+        return self._frame_id
 
     def forward(self, q: list[float]) -> Pose6D:
         if self._pin is None:

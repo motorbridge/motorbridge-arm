@@ -1,8 +1,12 @@
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 
 from ..model.kinematics import Kinematics
+
+logger = logging.getLogger(__name__)
+
 from ..motion.planner import ArcSpec, interpolate_pose_circular
 from ..trajectory.clik_tracker import IKParams
 from ..trajectory.sampler import TrajPlanParams, TrajProfile
@@ -68,8 +72,8 @@ class SimArm:
         q_start = self.get_joint_positions()
         q_end = self.solve_ik(target)
         traj = plan_joint_space_trajectory(
-            model=self._kin._model,
-            end_frame_id=self._kin._frame_id if self._kin._frame_id is not None else 0,
+            model=self._kin.pinocchio_model,
+            end_frame_id=self._kin.end_frame_id if self._kin.end_frame_id is not None else 0,
             q_start=q_start,
             q_end=q_end,
             duration=duration_s,
@@ -89,7 +93,9 @@ class SimArm:
             )
             for p in traj
         ]
-        return SimTrajectory(points=points, duration_s=duration_s)
+        result = SimTrajectory(points=points, duration_s=duration_s)
+        logger.info("plan_l: %d points, duration=%.2fs", len(result.points), result.duration_s)
+        return result
 
     def move_l(
         self,
@@ -134,7 +140,9 @@ class SimArm:
                     ik_success=True,
                 )
             )
-        return SimTrajectory(points=out, duration_s=duration_s)
+        result = SimTrajectory(points=out, duration_s=duration_s)
+        logger.info("plan_c: %d points, duration=%.2fs", len(result.points), result.duration_s)
+        return result
 
     def move_c(
         self,
