@@ -2,9 +2,11 @@ __pycache__/
 *.pyc
 *.pyo
 .venv/
+.eggs/
 *.egg-info/
 dist/
 build/
+export.log
 .pytest_cache/
 .mypy_cache/
 .ruff_cache/

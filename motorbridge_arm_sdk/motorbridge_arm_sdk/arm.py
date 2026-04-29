@@ -13,11 +13,14 @@ from .trajectory.trajectory_planner import plan_joint_space_trajectory
 from .trajectory.sampler import CartesianTrajectory, CartesianPoint, TrajPlanParams
 from .params.registry import ParamRegistry, create_default_registry
 from .runtime import RuntimeStateMachine
+from .safety.outlier_filter import OutlierFilter
 from .safety.supervisor import SafetySupervisor
 from .session import ModeLike, MotorBridgeSession
+from .telemetry.fps_monitor import FPSMonitor
 from .telemetry.recorder import Recorder
 from .telemetry.state_cache import StateCache
 from .types import ArmConfig, ArmRunState, ArmState, FaultState, JointState, PayloadConfig, Pose6D, ToolConfig
+from .ipc.shared_state import SharedArmState
 from .model.kinematics import Kinematics
 from .vendors import MotorAdapterRegistry, create_default_adapter_registry
 
@@ -61,19 +64,30 @@ class Arm:
         self._adapter_registry = adapter_registry or create_default_adapter_registry()
         self._session = MotorBridgeSession(config.channel, adapter_registry=self._adapter_registry)
         self._safety = SafetySupervisor(config)
+        self._outlier_filter = OutlierFilter(num_joints=len(config.joints))
         self._cache = StateCache(config)
         self._executor = JointMotionExecutor(config.loop_dt_s)
         self._zero = ZeroCalibrator(self._session)
         self._kin = Kinematics(config.urdf_path, config.ee_frame)
         self._registry = registry or create_default_registry()
         self._recorder = Recorder()
+        self._fps = FPSMonitor()
         self._tool = ToolConfig()
         self._payload = PayloadConfig()
         self._mode = "pos_vel"
         self._ctrl_thread: threading.Thread | None = None
-        self._ctrl_running = False
         self._ctrl_fn = None
         self._abort_event = threading.Event()
+        self._ctrl_stop_event = threading.Event()
+
+        # Shared-memory IPC (optional). / 共享内存 IPC（可选）。
+        self._shm: SharedArmState | None = None
+        if config.shared_memory_name is not None:
+            self._shm = SharedArmState(
+                name=config.shared_memory_name,
+                num_joints=len(config.joints),
+                create=True,
+            )
 
     def connect(self) -> None:
         """Establish communication with the robotic arm hardware.
@@ -109,6 +123,16 @@ class Arm:
         t = self._ctrl_thread
         return t is not None and t.is_alive()
 
+    @property
+    def config(self) -> ArmConfig:
+        """The arm configuration."""
+        return self._cfg
+
+    @property
+    def kinematics(self) -> Kinematics:
+        """The kinematics solver."""
+        return self._kin
+
     def close(self) -> None:
         """Shut down the arm controller and release all resources.
 
@@ -119,6 +143,10 @@ class Arm:
         self._runtime.force(ArmRunState.DISCONNECTED)
         self._session.close()
         self._cache.update_run_state(ArmRunState.DISCONNECTED)
+        if self._shm is not None:
+            self._shm.close()
+            self._shm.unlink()
+            self._shm = None
 
     def reconnect(self) -> None:
         """Close the current connection and re-establish a fresh one.
@@ -186,19 +214,41 @@ class Arm:
             if raw is None:
                 continue
             q = (raw.pos - h.config.zero_offset) / h.config.direction
+            # 过滤异常值 / Filter outlier values
+            filt_q, filt_vel, filt_torq = self._outlier_filter.filter_joint(i, q, raw.vel, raw.torq)
+            if filt_q is not q or filt_vel is not raw.vel or filt_torq is not raw.torq:
+                logger.warning(
+                    "outlier filtered on joint %d (%s): pos=%s vel=%s torq=%s",
+                    i,
+                    h.config.name,
+                    "FILTERED" if filt_q is None else f"{filt_q:.4f}",
+                    "FILTERED" if filt_vel is None else f"{filt_vel:.4f}",
+                    "FILTERED" if filt_torq is None else f"{filt_torq:.4f}",
+                )
             self._cache.update_joint(
                 i,
                 JointState(
                     name=h.config.name,
-                    pos=q,
-                    vel=raw.vel,
-                    torq=raw.torq,
+                    pos=filt_q,
+                    vel=filt_vel,
+                    torq=filt_torq,
                     status_code=raw.status_code,
                     t_mos=raw.t_mos,
                     t_rotor=raw.t_rotor,
                 ),
             )
-        return self._cache.snapshot()
+        self._fps.tick("feedback")
+        snapshot = self._cache.snapshot()
+
+        # Publish to shared memory if configured. / 如果已配置，发布到共享内存。
+        if self._shm is not None and self._shm.active:
+            positions = [0.0 if j.pos is None else float(j.pos) for j in snapshot.joints]
+            velocities = [0.0 if j.vel is None else float(j.vel) for j in snapshot.joints]
+            torques = [0.0 if j.torq is None else float(j.torq) for j in snapshot.joints]
+            statuses = [0 if j.status_code is None else int(j.status_code) for j in snapshot.joints]
+            self._shm.write(positions, velocities, torques, statuses)
+
+        return snapshot
 
     def get_state(self) -> ArmState:
         """Return the current arm state without requesting new hardware feedback.
@@ -239,8 +289,8 @@ class Arm:
         Returns:
             A list of joint position values in radians.
         """
-        _ = request
-        return self.get_joint_positions()
+        st = self.refresh_state() if request else self.get_state()
+        return [0.0 if j.pos is None else float(j.pos) for j in st.joints]
 
     def get_velocities(self, request: bool = True):
         """Return joint velocities, optionally refreshing from hardware.
@@ -253,8 +303,7 @@ class Arm:
             A list of joint velocity values in rad/s.  Joints with no
             reading default to ``0.0``.
         """
-        _ = request
-        st = self.refresh_state()
+        st = self.refresh_state() if request else self.get_state()
         return [0.0 if j.vel is None else float(j.vel) for j in st.joints]
 
     def get_torques(self, request: bool = True):
@@ -268,20 +317,24 @@ class Arm:
             A list of joint torque values in Nm.  Joints with no reading
             default to ``0.0``.
         """
-        _ = request
-        st = self.refresh_state()
+        st = self.refresh_state() if request else self.get_state()
         return [0.0 if j.torq is None else float(j.torq) for j in st.joints]
 
     def get_state_vectors(self):
         """Return positions, velocities, and torques in a single call.
 
-        Each sub-call refreshes hardware feedback independently.
+        Performs a single hardware refresh and extracts all three vectors
+        from the same state snapshot, avoiding redundant bus round-trips.
 
         Returns:
             A 3-tuple ``(positions, velocities, torques)`` where each
             element is a list of floats with one entry per configured joint.
         """
-        return self.get_positions(), self.get_velocities(), self.get_torques()
+        st = self.refresh_state()
+        pos = [0.0 if j.pos is None else float(j.pos) for j in st.joints]
+        vel = [0.0 if j.vel is None else float(j.vel) for j in st.joints]
+        torq = [0.0 if j.torq is None else float(j.torq) for j in st.joints]
+        return pos, vel, torq
 
     def get_joint_state(self, joint: int | str) -> JointState:
         """Return the full state of a single joint after refreshing hardware.
@@ -806,6 +859,41 @@ class Arm:
                 bad.append(j.name)
         return FaultState(has_fault=len(bad) > 0, faulted_joints=bad)
 
+    def get_fps(self, channel: str = "feedback") -> float:
+        """Return the current FPS for a named telemetry channel.
+
+        返回指定遥测通道的当前帧率。
+
+        The default channel ``"feedback"`` is ticked on every call to
+        :meth:`refresh_state`.  The ``"control_loop"`` channel is ticked at
+        the start of every control-loop iteration.
+
+        默认通道 ``"feedback"`` 在每次调用 :meth:`refresh_state` 时记录一帧。
+        ``"control_loop"`` 通道在每次控制循环迭代开始时记录一帧。
+
+        Args:
+            channel: Name of the telemetry channel.  Defaults to
+                ``"feedback"``.
+                遥测通道名称，默认为 ``"feedback"``。
+
+        Returns:
+            Frames-per-second for the channel, or ``0.0`` if insufficient
+            data is available.
+            该通道的每秒帧数；数据不足时返回 ``0.0``。
+        """
+        return self._fps.fps(channel)
+
+    def get_all_fps(self) -> dict[str, float]:
+        """Return FPS values for all tracked channels.
+
+        返回所有已追踪通道的帧率。
+
+        Returns:
+            A dict mapping channel name to current FPS.
+            键为通道名称、值为当前 FPS 的字典。
+        """
+        return self._fps.all_fps()
+
     def clear_faults(self) -> None:
         """Clear fault conditions on all joints.
 
@@ -874,12 +962,13 @@ class Arm:
         if self.control_loop_active:
             self.stop_control_loop()
         self._ctrl_fn = callback
-        self._ctrl_running = True
+        self._ctrl_stop_event.clear()
         dt = self._cfg.loop_dt_s if rate_hz is None or rate_hz <= 0 else 1.0 / rate_hz
 
         def _loop():
-            while self._ctrl_running:
+            while not self._ctrl_stop_event.is_set():
                 t0 = time.perf_counter()
+                self._fps.tick("control_loop")
                 if self._ctrl_fn is not None:
                     self._ctrl_fn(self, dt)
                 dt_sleep = dt - (time.perf_counter() - t0)
@@ -895,7 +984,7 @@ class Arm:
         Signals the loop thread to exit and waits up to one second for it
         to join.  Safe to call even when no loop is running.
         """
-        self._ctrl_running = False
+        self._ctrl_stop_event.set()
         if self._ctrl_thread is not None:
             if threading.current_thread() is not self._ctrl_thread:
                 self._ctrl_thread.join(timeout=1.0)

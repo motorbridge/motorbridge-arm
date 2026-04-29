@@ -39,6 +39,7 @@ class ArmConfig:
     urdf_path: str | None = None
     ee_frame: str = "tool0"
     gripper_joint: str | None = None
+    shared_memory_name: str | None = None
 
 
 @dataclass(slots=True)

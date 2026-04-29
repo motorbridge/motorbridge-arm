@@ -18,32 +18,75 @@ class TrajResult:
 
 
 class ArmEndPos:
-    """Independent high-level end-effector controller."""
+    """Independent high-level end-effector controller.
+
+    Provides IK-based and trajectory-based motion commands using the
+    parent :class:`Arm` instance's kinematics and motion execution pipeline.
+
+    Args:
+        arm: A connected :class:`Arm` instance.
+    """
 
     def __init__(self, arm: Arm) -> None:
         self.arm = arm
 
+    @property
+    def _kin(self):
+        """Shortcut to the arm's kinematics solver."""
+        return self.arm.kinematics
+
+    @property
+    def _cfg(self):
+        """Shortcut to the arm configuration."""
+        return self.arm.config
+
     def move_to_ik(self, target: Pose6D, vlim: float = 1.0) -> bool:
+        """Move to a target pose using IK + joint-space motion.
+
+        Solves IK for *target* using the current joint state as seed, then
+        executes a ``move_j`` with a min-jerk profile.
+
+        Args:
+            target: Desired end-effector pose.
+            vlim: Velocity limit as a fraction of maximum.  Defaults to ``1.0``.
+
+        Returns:
+            ``True`` on success.
+        """
         q = self.arm.solve_ik(target)
         self.arm.move_j(q, vlim=vlim, profile="min_jerk")
         return True
 
     def move_to_traj(self, target: Pose6D, duration_s: float = 2.0, vlim: float = 1.0) -> TrajResult:
+        """Move to a target pose using CLIK trajectory planning.
+
+        Plans a Cartesian geodesic trajectory, tracks it with a CLIK solver
+        that includes joint-limit-aware null-space projection, then executes
+        the resulting joint-space waypoints on the hardware.
+
+        Args:
+            target: Desired end-effector pose.
+            duration_s: Trajectory duration in seconds.  Defaults to ``2.0``.
+            vlim: Velocity limit as a fraction of maximum.  Defaults to ``1.0``.
+
+        Returns:
+            A :class:`TrajResult` with planning statistics.
+        """
         start = self.arm.get_pose()
-        ref = plan_se3_geodesic(start, target, duration_s=duration_s, dt_s=self.arm._cfg.loop_dt_s)
+        ref = plan_se3_geodesic(start, target, duration_s=duration_s, dt_s=self._cfg.loop_dt_s)
         q0 = self.arm.get_joint_positions()
         q1 = self.arm.solve_ik(target)
         jt = plan_joint_space_trajectory(
-            model=self.arm._kin.pinocchio_model,
-            end_frame_id=self.arm._kin.end_frame_id if self.arm._kin.end_frame_id is not None else 0,
+            model=self._kin.pinocchio_model,
+            end_frame_id=self._kin.end_frame_id if self._kin.end_frame_id is not None else 0,
             q_start=q0,
             q_end=q1,
             duration=duration_s,
-            kin=self.arm._kin,
+            kin=self._kin,
             ik_params=IKParams(),
             null_gain=0.1,
         )
         self.arm.execute_joint_trajectory([p.q for p in jt], vlim=vlim, motion_name="move_l_clik")
-        actual = [self.arm._kin.forward(p.q) for p in jt]
+        actual = [self._kin.forward(p.q) for p in jt]
         s = compute_geodesic_stats(ref, actual, success_flags=[p.ik_success for p in jt])
         return TrajResult(ok=True, points=s.total_points, max_pos_err=s.max_position_error, avg_pos_err=s.avg_position_error)

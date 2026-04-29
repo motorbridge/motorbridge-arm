@@ -228,50 +228,25 @@ class MotorBridgeSession:
     def set_param(self, index: int, param_id: int, param_type: str, value: int | float) -> None:
         h = self._joints[index]
         vendor = h.config.vendor.lower()
-        if vendor == "robstride":
-            if param_type == "i8":
-                self._retry_call(lambda: h.motor.robstride_write_param_i8(param_id, int(value)), "robstride_write_param_i8")
-            elif param_type == "u8":
-                self._retry_call(lambda: h.motor.robstride_write_param_u8(param_id, int(value)), "robstride_write_param_u8")
-            elif param_type == "u16":
-                self._retry_call(lambda: h.motor.robstride_write_param_u16(param_id, int(value)), "robstride_write_param_u16")
-            elif param_type == "u32":
-                self._retry_call(lambda: h.motor.robstride_write_param_u32(param_id, int(value)), "robstride_write_param_u32")
-            elif param_type == "f32":
-                self._retry_call(lambda: h.motor.robstride_write_param_f32(param_id, float(value)), "robstride_write_param_f32")
-            else:
-                raise ArmError(ArmErrorCode.ERR_UNSUPPORTED, f"unsupported param type: {param_type}")
-            return
-        if vendor == "damiao":
-            if param_type == "u32":
-                self._retry_call(lambda: h.motor.damiao_write_param_u32(param_id, int(value)), "damiao_write_param_u32")
-            elif param_type == "f32":
-                self._retry_call(lambda: h.motor.damiao_write_param_f32(param_id, float(value)), "damiao_write_param_f32")
-            else:
-                raise ArmError(ArmErrorCode.ERR_UNSUPPORTED, f"damiao unsupported param type: {param_type}")
-            return
-        raise ArmError(ArmErrorCode.ERR_UNSUPPORTED, f"param rw not implemented for vendor={vendor}")
+        method_name = self._adapter_registry.get_write_method(vendor, param_type)
+        fn = getattr(h.motor, method_name, None)
+        if fn is None:
+            raise ArmError(ArmErrorCode.ERR_UNSUPPORTED, f"motor missing method: {method_name}")
+        if param_type == "f32":
+            cast_val = float(value)
+        else:
+            cast_val = int(value)
+        self._retry_call(lambda: fn(param_id, cast_val), method_name)
 
     def get_param(self, index: int, param_id: int, param_type: str, timeout_ms: int = 1000) -> int | float:
         h = self._joints[index]
         vendor = h.config.vendor.lower()
-        if vendor == "robstride":
-            if param_type == "i8":
-                return int(self._retry_call(lambda: h.motor.robstride_get_param_i8(param_id, timeout_ms), "robstride_get_param_i8"))
-            if param_type == "u8":
-                return int(self._retry_call(lambda: h.motor.robstride_get_param_u8(param_id, timeout_ms), "robstride_get_param_u8"))
-            if param_type == "u16":
-                return int(self._retry_call(lambda: h.motor.robstride_get_param_u16(param_id, timeout_ms), "robstride_get_param_u16"))
-            if param_type == "u32":
-                return int(self._retry_call(lambda: h.motor.robstride_get_param_u32(param_id, timeout_ms), "robstride_get_param_u32"))
-            if param_type == "f32":
-                return float(self._retry_call(lambda: h.motor.robstride_get_param_f32(param_id, timeout_ms), "robstride_get_param_f32"))
-        if vendor == "damiao":
-            if param_type == "u32":
-                return int(self._retry_call(lambda: h.motor.damiao_get_param_u32(param_id, timeout_ms), "damiao_get_param_u32"))
-            if param_type == "f32":
-                return float(self._retry_call(lambda: h.motor.damiao_get_param_f32(param_id, timeout_ms), "damiao_get_param_f32"))
-        raise ArmError(ArmErrorCode.ERR_UNSUPPORTED, f"unsupported get_param type={param_type} vendor={vendor}")
+        method_name = self._adapter_registry.get_read_method(vendor, param_type)
+        fn = getattr(h.motor, method_name, None)
+        if fn is None:
+            raise ArmError(ArmErrorCode.ERR_UNSUPPORTED, f"motor missing method: {method_name}")
+        result = self._retry_call(lambda: fn(param_id, timeout_ms), method_name)
+        return float(result) if param_type == "f32" else int(result)
 
     def _retry_call(self, fn, op_name: str, err_code: ArmErrorCode = ArmErrorCode.ERR_TIMEOUT):
         last_exc: Exception | None = None

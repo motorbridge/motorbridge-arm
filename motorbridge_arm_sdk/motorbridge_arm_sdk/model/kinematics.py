@@ -54,7 +54,7 @@ class Kinematics:
     def _try_load_pinocchio(self, urdf_path: str, ee_frame: str) -> None:
         try:
             import pinocchio as pin
-        except Exception:
+        except ImportError:
             logger.warning("pinocchio not available; kinematics will use simplified chain fallback")
             return
         p = Path(urdf_path)
