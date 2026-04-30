@@ -238,46 +238,44 @@ class Gripper:
             kp: Optional kp override. / 可选 kp 覆盖。
             kd: Optional kd override. / 可选 kd 覆盖。
             stabilize_delay: Seconds to wait after mode switch. / 模式切换后等待时间（秒）。
+
+        Raises:
+            ArmError: If the mode switch fails after retries.
         """
         if kp is not None:
             self._cfg.mit_kp = kp
         if kd is not None:
             self._cfg.mit_kd = kd
-        try:
-            self._session.ensure_mode_joint(0, ModeLike.MIT)
-            self._mode = "mit"
-            time.sleep(stabilize_delay)
-            return True
-        except Exception as exc:
-            logger.warning("gripper mode_mit failed: %s", exc)
-            return False
+        self._session.ensure_mode_joint(0, ModeLike.MIT)
+        self._mode = "mit"
+        time.sleep(stabilize_delay)
+        return True
 
     def mode_pos_vel(self, stabilize_delay: float = 0.2) -> bool:
         """Switch to position-velocity mode with pre-configured PI gains.
 
         Writes velocity Kp/Ki (registers 25-26) and position Kp/Ki
         (registers 27-28) before switching the mode.
+
+        Raises:
+            ArmError: If the mode switch fails after retries.
         """
-        try:
-            self._session.write_pi_gains(0, self._cfg.vel_kp, self._cfg.vel_ki, self._cfg.pos_kp, self._cfg.pos_ki)
-            self._session.ensure_mode_joint(0, ModeLike.POS_VEL)
-            self._mode = "pos_vel"
-            time.sleep(stabilize_delay)
-            return True
-        except Exception as exc:
-            logger.warning("gripper mode_pos_vel failed: %s", exc)
-            return False
+        self._session.write_pi_gains(0, self._cfg.vel_kp, self._cfg.vel_ki, self._cfg.pos_kp, self._cfg.pos_ki)
+        self._session.ensure_mode_joint(0, ModeLike.POS_VEL)
+        self._mode = "pos_vel"
+        time.sleep(stabilize_delay)
+        return True
 
     def mode_vel(self, stabilize_delay: float = 0.2) -> bool:
-        """Switch to pure velocity mode. / 切换到纯速度模式。"""
-        try:
-            self._session.ensure_mode_joint(0, ModeLike.VEL)
-            self._mode = "vel"
-            time.sleep(stabilize_delay)
-            return True
-        except Exception as exc:
-            logger.warning("gripper mode_vel failed: %s", exc)
-            return False
+        """Switch to pure velocity mode.
+
+        Raises:
+            ArmError: If the mode switch fails after retries.
+        """
+        self._session.ensure_mode_joint(0, ModeLike.VEL)
+        self._mode = "vel"
+        time.sleep(stabilize_delay)
+        return True
 
     def mit(self, pos: float, vel: float = 0.0, kp: float | None = None, kd: float | None = None, tau: float = 0.0) -> None:
         """Send MIT impedance command.

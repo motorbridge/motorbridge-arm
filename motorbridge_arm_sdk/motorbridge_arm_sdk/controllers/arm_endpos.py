@@ -67,6 +67,13 @@ class ArmEndPos:
             logger.warning("safe_home() during end() failed: %s", exc)
         self.arm.close()
 
+    def stop(self) -> None:
+        """Alias for :meth:`end` to satisfy the LifecycleController protocol.
+
+        :meth:`end` 的别名，满足 LifecycleController 协议。
+        """
+        self.end()
+
     def safe_home(self, vlim: float = 0.3, timeout_s: float = 30.0) -> None:
         """Move the arm to its home (zero) position at reduced velocity.
 

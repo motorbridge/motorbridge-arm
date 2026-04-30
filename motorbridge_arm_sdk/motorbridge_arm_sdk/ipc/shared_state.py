@@ -50,6 +50,7 @@ _MAGIC = 0x41524D53  # b"ARMS" in little-endian uint32
 _VERSION = 1
 _HEADER_FMT = "<IQI"  # magic(4B) + tick(8B) + num_joints(4B) = 16 bytes
 _HEADER_SIZE = struct.calcsize(_HEADER_FMT)  # 16
+_TICK_OFFSET = 4  # tick field starts after 4-byte magic
 _LOCK_OFFSET = _HEADER_SIZE  # spinlock byte sits right after header
 _PAD_BYTES = 3  # padding to align joint data to 8-byte boundary
 _JOINT_FMT = "<dddi"  # pos(8) + vel(8) + torque(8) + status(4) = 28 bytes
@@ -182,8 +183,7 @@ class SharedArmState:
         if not self._active:
             return 0
         buf = self._shm.buf
-        data = bytes(buf[_HEADER_SIZE - 8 : _HEADER_SIZE])  # tick field only
-        return struct.unpack("<Q", data)[0]
+        return struct.unpack_from("<Q", buf, _TICK_OFFSET)[0]
 
     def write(
         self,
@@ -230,8 +230,8 @@ class SharedArmState:
 
         try:
             # Increment tick / 递增 tick
-            old_tick = struct.unpack_from("<Q", buf, 8)[0]
-            struct.pack_into("<Q", buf, 8, old_tick + 1)
+            old_tick = struct.unpack_from("<Q", buf, _TICK_OFFSET)[0]
+            struct.pack_into("<Q", buf, _TICK_OFFSET, old_tick + 1)
 
             # Write per-joint data / 逐关节写入数据
             for i in range(n):
@@ -281,7 +281,7 @@ class SharedArmState:
                 time.sleep(_SPIN_SLEEP)
 
             # Read tick before / 读取前 tick
-            tick_before = struct.unpack_from("<Q", buf, 8)[0]
+            tick_before = struct.unpack_from("<Q", buf, _TICK_OFFSET)[0]
 
             # Read all joint data / 读取所有关节数据
             positions: list[float] = []
@@ -298,7 +298,7 @@ class SharedArmState:
                 statuses.append(s)
 
             # Read tick after / 读取后 tick
-            tick_after = struct.unpack_from("<Q", buf, 8)[0]
+            tick_after = struct.unpack_from("<Q", buf, _TICK_OFFSET)[0]
 
             # If tick changed or lock was taken, retry / 如果 tick 变化或锁被占用，重试
             if tick_before == tick_after and buf[_LOCK_OFFSET] == _LOCK_FREE:

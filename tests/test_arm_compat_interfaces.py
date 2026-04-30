@@ -1,5 +1,5 @@
 from motorbridge_arm_sdk.arm import Arm
-from motorbridge_arm_sdk.types import ArmConfig, JointConfig
+from motorbridge_arm_sdk.types import ArmConfig, ArmRunState, JointConfig
 
 
 def _mk_cfg() -> ArmConfig:
@@ -22,6 +22,9 @@ class _FakeSession:
     def ensure_mode_all(self, mode):
         self.calls.append(("mode_all", int(mode)))
 
+    def write_pi_gains(self, index, vel_kp, vel_ki, pos_kp, pos_ki):
+        self.calls.append(("pi_gains", index, vel_kp, vel_ki, pos_kp, pos_ki))
+
     def set_pos_vel_all(self, pos, vlim):
         self.calls.append(("pos_vel", list(pos), float(vlim)))
 
@@ -35,6 +38,7 @@ class _FakeSession:
 def test_mode_and_vector_commands():
     arm = Arm(_mk_cfg())
     arm._session = _FakeSession()
+    arm._runtime.force(ArmRunState.ENABLED)
     arm.mode_pos_vel()
     arm.pos_vel([0.1, 0.2], vlim=0.8)
     arm.mode_vel()
