@@ -259,10 +259,7 @@ class Gripper:
         (registers 27-28) before switching the mode.
         """
         try:
-            self._session.set_param(0, 25, "f32", self._cfg.vel_kp)
-            self._session.set_param(0, 26, "f32", self._cfg.vel_ki)
-            self._session.set_param(0, 27, "f32", self._cfg.pos_kp)
-            self._session.set_param(0, 28, "f32", self._cfg.pos_ki)
+            self._session.write_pi_gains(0, self._cfg.vel_kp, self._cfg.vel_ki, self._cfg.pos_kp, self._cfg.pos_ki)
             self._session.ensure_mode_joint(0, ModeLike.POS_VEL)
             self._mode = "pos_vel"
             time.sleep(stabilize_delay)

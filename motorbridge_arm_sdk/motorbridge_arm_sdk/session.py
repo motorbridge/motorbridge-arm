@@ -12,6 +12,12 @@ from .vendors import MotorAdapterRegistry, create_default_adapter_registry
 
 logger = logging.getLogger(__name__)
 
+# PI gain register IDs for POS_VEL mode.
+_POS_VEL_VEL_KP_REG = 25
+_POS_VEL_VEL_KI_REG = 26
+_POS_VEL_POS_KP_REG = 27
+_POS_VEL_POS_KI_REG = 28
+
 
 class ModeLike(IntEnum):
     MIT = 0
@@ -279,6 +285,13 @@ class MotorBridgeSession:
         else:
             cast_val = int(value)
         self._retry_call(lambda: fn(param_id, cast_val), method_name)
+
+    def write_pi_gains(self, index: int, vel_kp: float, vel_ki: float, pos_kp: float, pos_ki: float) -> None:
+        """Write velocity and position PI gains to registers 25-28 for POS_VEL mode."""
+        self.set_param(index, _POS_VEL_VEL_KP_REG, "f32", vel_kp)
+        self.set_param(index, _POS_VEL_VEL_KI_REG, "f32", vel_ki)
+        self.set_param(index, _POS_VEL_POS_KP_REG, "f32", pos_kp)
+        self.set_param(index, _POS_VEL_POS_KI_REG, "f32", pos_ki)
 
     def get_param(self, index: int, param_id: int, param_type: str, timeout_ms: int = 1000) -> int | float:
         self._check_index(index)

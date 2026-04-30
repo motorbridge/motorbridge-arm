@@ -27,6 +27,13 @@ from .vendors import MotorAdapterRegistry, create_default_adapter_registry
 
 logger = logging.getLogger(__name__)
 
+# Named constants for control gains and safety margins.
+_DEFAULT_MIT_KP = 20.0
+_DEFAULT_MIT_KD = 2.0
+_SAFE_RAISE_RAD = 0.3
+_ESTOP_KD_BOOST_LARGE = 3.0
+_ESTOP_KD_BOOST_SMALL = 1.5
+
 
 class Arm:
     """High-level robotic arm controller.
@@ -238,14 +245,14 @@ class Arm:
         q_now = self.get_joint_positions()
         n = len(self._cfg.joints)
         kp = [0.0] * n
-        kd = [2.0] * n
+        kd = [_DEFAULT_MIT_KD] * n
         vel = [0.0] * n
         tau = [0.0] * n
         self.mode_mit()
         self._session.set_mit_all(q_now, vel, kp, kd, tau)
         self._damping_mode = True
         self._cache.update_run_state(ArmRunState.ENABLED)
-        logger.info("set_to_damping: arm is now in damping mode (kp=0, kd=2.0)")
+        logger.info("set_to_damping: arm is now in damping mode (kp=0, kd=%.1f)", _DEFAULT_MIT_KD)
 
     def reset_to_home(self, vlim: float = 0.5) -> None:
         """Safely return the arm to its home position with gain ramping.
@@ -284,8 +291,7 @@ class Arm:
         q_intermediate = list(q_now)
         # Raise joint 3 (index 2) slightly to clear obstacles.
         if n > 2:
-            safe_raise = 0.3  # radians
-            q_intermediate[2] = q_now[2] + safe_raise
+            q_intermediate[2] = q_now[2] + _SAFE_RAISE_RAD
             # Clamp to joint limits.
             jc = self._cfg.joints[2]
             q_intermediate[2] = max(jc.limit_pos_min, min(jc.limit_pos_max, q_intermediate[2]))
@@ -309,8 +315,8 @@ class Arm:
 
         # Execute with gain ramping via MIT mode.
         # Start with low kp, ramp to full kp over the trajectory.
-        default_kp = 20.0  # Starting kp for ramp
-        default_kd = 2.0
+        default_kp = _DEFAULT_MIT_KP
+        default_kd = _DEFAULT_MIT_KD
         self.mode_mit()
         self._runtime.transition(ArmRunState.RUNNING)
         self._cache.update_run_state(ArmRunState.RUNNING)
@@ -356,8 +362,7 @@ class Arm:
             self.mode_mit()
             kp = [0.0] * n
             # Boosted kd: 3x normal on first 3 joints, 1.5x on the rest.
-            normal_kd = 2.0
-            kd = [normal_kd * 3.0 if i < 3 else normal_kd * 1.5 for i in range(n)]
+            kd = [_DEFAULT_MIT_KD * _ESTOP_KD_BOOST_LARGE if i < 3 else _DEFAULT_MIT_KD * _ESTOP_KD_BOOST_SMALL for i in range(n)]
             vel = [0.0] * n
             tau = [0.0] * n
             self._session.set_mit_all(q_now, vel, kp, kd, tau)
@@ -421,11 +426,7 @@ class Arm:
 
         # Publish to shared memory if configured. / 如果已配置，发布到共享内存。
         if self._shm is not None and self._shm.active:
-            positions = [0.0 if j.pos is None else float(j.pos) for j in snapshot.joints]
-            velocities = [0.0 if j.vel is None else float(j.vel) for j in snapshot.joints]
-            torques = [0.0 if j.torq is None else float(j.torq) for j in snapshot.joints]
-            statuses = [0 if j.status_code is None else int(j.status_code) for j in snapshot.joints]
-            self._shm.write(positions, velocities, torques, statuses)
+            self._shm.write(snapshot.positions(), snapshot.velocities(), snapshot.torques(), snapshot.status_codes())
 
         return snapshot
 
@@ -449,10 +450,7 @@ class Arm:
             joint.  Joints with no reading default to ``0.0``.
         """
         st = self.refresh_state()
-        out: list[float] = []
-        for j in st.joints:
-            out.append(0.0 if j.pos is None else float(j.pos))
-        return out
+        return st.positions()
 
     def get_positions(self, request: bool = True) -> list[float]:
         """Return joint positions, optionally refreshing from hardware.
@@ -469,7 +467,7 @@ class Arm:
             A list of joint position values in radians.
         """
         st = self.refresh_state() if request else self.get_state()
-        return [0.0 if j.pos is None else float(j.pos) for j in st.joints]
+        return st.positions()
 
     def get_velocities(self, request: bool = True) -> list[float]:
         """Return joint velocities, optionally refreshing from hardware.
@@ -483,7 +481,7 @@ class Arm:
             reading default to ``0.0``.
         """
         st = self.refresh_state() if request else self.get_state()
-        return [0.0 if j.vel is None else float(j.vel) for j in st.joints]
+        return st.velocities()
 
     def get_torques(self, request: bool = True) -> list[float]:
         """Return joint torques, optionally refreshing from hardware.
@@ -497,7 +495,7 @@ class Arm:
             default to ``0.0``.
         """
         st = self.refresh_state() if request else self.get_state()
-        return [0.0 if j.torq is None else float(j.torq) for j in st.joints]
+        return st.torques()
 
     def get_state_vectors(self) -> tuple[list[float], list[float], list[float]]:
         """Return positions, velocities, and torques in a single call.
@@ -510,10 +508,7 @@ class Arm:
             element is a list of floats with one entry per configured joint.
         """
         st = self.refresh_state()
-        pos = [0.0 if j.pos is None else float(j.pos) for j in st.joints]
-        vel = [0.0 if j.vel is None else float(j.vel) for j in st.joints]
-        torq = [0.0 if j.torq is None else float(j.torq) for j in st.joints]
-        return pos, vel, torq
+        return st.positions(), st.velocities(), st.torques()
 
     def get_joint_state(self, joint: int | str) -> JointState:
         """Return the full state of a single joint after refreshing hardware.
@@ -604,10 +599,7 @@ class Arm:
         """
         for i, jc in enumerate(self._cfg.joints):
             try:
-                self._session.set_param(i, 25, "f32", jc.vel_kp)
-                self._session.set_param(i, 26, "f32", jc.vel_ki)
-                self._session.set_param(i, 27, "f32", jc.pos_kp)
-                self._session.set_param(i, 28, "f32", jc.pos_ki)
+                self._session.write_pi_gains(i, jc.vel_kp, jc.vel_ki, jc.pos_kp, jc.pos_ki)
             except ArmError:
                 logger.debug("PI gain write for joint %d skipped (vendor may not support)", i)
         self._mode = "pos_vel"

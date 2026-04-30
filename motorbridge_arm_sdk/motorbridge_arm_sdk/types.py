@@ -106,3 +106,15 @@ class ArmState:
     run_state: ArmRunState
     joints: list[JointState]
     updated_at_s: float
+
+    def positions(self) -> list[float]:
+        return [0.0 if j.pos is None else float(j.pos) for j in self.joints]
+
+    def velocities(self) -> list[float]:
+        return [0.0 if j.vel is None else float(j.vel) for j in self.joints]
+
+    def torques(self) -> list[float]:
+        return [0.0 if j.torq is None else float(j.torq) for j in self.joints]
+
+    def status_codes(self) -> list[int]:
+        return [0 if j.status_code is None else int(j.status_code) for j in self.joints]
