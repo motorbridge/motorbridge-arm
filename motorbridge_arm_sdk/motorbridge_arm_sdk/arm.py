@@ -110,10 +110,16 @@ class Arm:
             RuntimeError: If the session cannot be opened or the runtime
                 state does not allow a transition to IDLE.
         """
+        prev_state = self._runtime.state
         self._runtime.transition(ArmRunState.IDLE)
-        self._session.connect()
-        for j in self._cfg.joints:
-            self._session.add_joint(j)
+        try:
+            self._session.connect()
+            for j in self._cfg.joints:
+                self._session.add_joint(j)
+        except Exception:
+            self._runtime.force(prev_state)
+            self._cache.update_run_state(prev_state)
+            raise
         self._cache.update_run_state(ArmRunState.IDLE)
         self._recorder.add("connect", {"channel": self._cfg.channel, "joints": len(self._cfg.joints)})
 
@@ -857,6 +863,15 @@ class Arm:
         q = self._safety.clamp_joint_targets(q)
         return q
 
+    def _ik_waypoints(self, poses: list[Pose6D], q_seed: list[float]) -> list[list[float]]:
+        """Solve IK for a sequence of Cartesian poses, seed-chaining each result."""
+        points: list[list[float]] = []
+        q = list(q_seed)
+        for pose in poses:
+            q = self._kin.inverse(pose, q)
+            points.append(self._safety.clamp_joint_targets(q))
+        return points
+
     def move_l(self, target: Pose6D, vlim: float = 1.0, step_m: float = 0.01, profile: str | None = None) -> None:
         """Move the end-effector in a straight line (linear Cartesian motion).
 
@@ -920,9 +935,7 @@ class Arm:
                 poses = interpolate_pose_geodesic(start, target, steps, profile=profile_name)
             else:
                 poses = interpolate_pose_linear(start, target, steps, profile=profile_name)
-            for pose in poses:
-                q_now = self._kin.inverse(pose, q_now)
-                joint_points.append(self._safety.clamp_joint_targets(q_now))
+            joint_points = self._ik_waypoints(poses, q_now)
         self._run_joint_points(joint_points, vlim=vlim, motion_name="move_l")
 
     def move_c(
@@ -958,15 +971,7 @@ class Arm:
         """
         self._require_connected()
         q_now = self.get_joint_positions()
-        start = self._kin.forward(q_now)
-        start = Pose6D(
-            x=start.x + self._tool.x,
-            y=start.y + self._tool.y,
-            z=start.z + self._tool.z,
-            roll=start.roll + self._tool.roll,
-            pitch=start.pitch + self._tool.pitch,
-            yaw=start.yaw + self._tool.yaw,
-        )
+        start = self._apply_tool_offset(self._kin.forward(q_now))
         poses = interpolate_pose_circular(
             start,
             target,
@@ -1001,9 +1006,7 @@ class Arm:
 
         # Fallback path: per-waypoint IK.
         if not joint_points:
-            for pose in poses:
-                q_now = self._kin.inverse(pose, q_now)
-                joint_points.append(self._safety.clamp_joint_targets(q_now))
+            joint_points = self._ik_waypoints(poses, q_now)
         self._run_joint_points(joint_points, vlim=vlim, motion_name="move_c")
 
     def read_param(self, joint_index: int, param_id: int, param_type: str | None = None, timeout_ms: int = 1000) -> int | float:

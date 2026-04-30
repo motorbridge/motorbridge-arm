@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import math
 import threading
 import time
 from dataclasses import dataclass
@@ -45,6 +46,11 @@ class MotorBridgeSession:
     def _check_index(self, index: int) -> None:
         if index < 0 or index >= len(self._joints):
             raise ArmError(ArmErrorCode.ERR_CONFIG, f"joint index {index} out of range [0, {len(self._joints)})")
+
+    @staticmethod
+    def _validate_float(value: float, name: str) -> None:
+        if math.isnan(value) or math.isinf(value):
+            raise ArmError(ArmErrorCode.ERR_LIMIT, f"{name} is {value}; NaN/Inf not allowed")
 
     @property
     def joints(self) -> list[JointHandle]:
@@ -170,10 +176,17 @@ class MotorBridgeSession:
     def set_pos_vel_all(self, q: list[float], vlim: float) -> None:
         if len(q) != len(self._joints):
             raise ArmError(ArmErrorCode.ERR_CONFIG, "q length mismatch")
-        for target, h in zip(q, self._joints):
-            motor_target = target * h.config.direction + h.config.zero_offset
+        self._validate_float(vlim, "vlim")
+        for i, (target, h) in enumerate(zip(q, self._joints)):
+            self._validate_float(target, f"q[{i}]")
+            clamped = max(h.config.limit_pos_min, min(h.config.limit_pos_max, target))
+            if clamped != target:
+                logger.warning("set_pos_vel(%s): pos %.4f clamped to %.4f [%s]",
+                               h.config.name, target, clamped, h.config.name)
+            motor_target = clamped * h.config.direction + h.config.zero_offset
+            safe_vlim = min(abs(vlim), h.config.limit_vel)
             self._retry_call(
-                lambda mt=motor_target, vl=vlim, hh=h: hh.motor.send_pos_vel(float(mt), float(vl)),
+                lambda mt=motor_target, vl=safe_vlim, hh=h: hh.motor.send_pos_vel(float(mt), float(vl)),
                 op_name=f"send_pos_vel({h.config.name})",
                 err_code=ArmErrorCode.ERR_TIMEOUT,
             )
@@ -181,8 +194,12 @@ class MotorBridgeSession:
     def set_vel_all(self, vel: list[float]) -> None:
         if len(vel) != len(self._joints):
             raise ArmError(ArmErrorCode.ERR_CONFIG, "vel length mismatch")
-        for target, h in zip(vel, self._joints):
-            motor_vel = target * h.config.direction
+        for i, (target, h) in enumerate(zip(vel, self._joints)):
+            self._validate_float(target, f"vel[{i}]")
+            clamped = max(-h.config.limit_vel, min(h.config.limit_vel, target))
+            if clamped != target:
+                logger.warning("set_vel(%s): vel %.4f clamped to %.4f", h.config.name, target, clamped)
+            motor_vel = clamped * h.config.direction
             self._retry_call(
                 lambda mv=motor_vel, hh=h: hh.motor.send_vel(float(mv)),
                 op_name=f"send_vel({h.config.name})",
@@ -197,10 +214,16 @@ class MotorBridgeSession:
             tau = [0.0] * n
         if len(tau) != n:
             raise ArmError(ArmErrorCode.ERR_CONFIG, "tau length mismatch")
+        for i in range(n):
+            self._validate_float(pos[i], f"pos[{i}]")
+            self._validate_float(vel[i], f"vel[{i}]")
         for i, h in enumerate(self._joints):
-            motor_pos = pos[i] * h.config.direction + h.config.zero_offset
-            motor_vel = vel[i] * h.config.direction
-            motor_tau = tau[i] * h.config.direction
+            clamped_pos = max(h.config.limit_pos_min, min(h.config.limit_pos_max, pos[i]))
+            clamped_vel = max(-h.config.limit_vel, min(h.config.limit_vel, vel[i]))
+            clamped_tau = max(-h.config.limit_tau, min(h.config.limit_tau, tau[i]))
+            motor_pos = clamped_pos * h.config.direction + h.config.zero_offset
+            motor_vel = clamped_vel * h.config.direction
+            motor_tau = clamped_tau * h.config.direction
             self._retry_call(
                 lambda mp=motor_pos, mv=motor_vel, kpi=kp[i], kdi=kd[i], mt=motor_tau, hh=h: hh.motor.send_mit(float(mp), float(mv), float(kpi), float(kdi), float(mt)),
                 op_name=f"send_mit({h.config.name})",
@@ -209,18 +232,24 @@ class MotorBridgeSession:
 
     def set_pos_vel_joint(self, index: int, q_target: float, vlim: float) -> None:
         self._check_index(index)
+        self._validate_float(q_target, "q_target")
+        self._validate_float(vlim, "vlim")
         h = self._joints[index]
-        motor_target = q_target * h.config.direction + h.config.zero_offset
+        clamped = max(h.config.limit_pos_min, min(h.config.limit_pos_max, q_target))
+        safe_vlim = min(abs(vlim), h.config.limit_vel)
+        motor_target = clamped * h.config.direction + h.config.zero_offset
         self._retry_call(
-            lambda: h.motor.send_pos_vel(float(motor_target), float(vlim)),
+            lambda: h.motor.send_pos_vel(float(motor_target), float(safe_vlim)),
             op_name=f"send_pos_vel({h.config.name})",
             err_code=ArmErrorCode.ERR_TIMEOUT,
         )
 
     def set_vel_joint(self, index: int, vel: float) -> None:
         self._check_index(index)
+        self._validate_float(vel, "vel")
         h = self._joints[index]
-        motor_vel = vel * h.config.direction
+        clamped = max(-h.config.limit_vel, min(h.config.limit_vel, vel))
+        motor_vel = clamped * h.config.direction
         self._retry_call(
             lambda: h.motor.send_vel(float(motor_vel)),
             op_name=f"send_vel({h.config.name})",
@@ -229,10 +258,18 @@ class MotorBridgeSession:
 
     def set_mit_joint(self, index: int, pos: float, vel: float, kp: float, kd: float, tau: float = 0.0) -> None:
         self._check_index(index)
+        self._validate_float(pos, "pos")
+        self._validate_float(vel, "vel")
+        self._validate_float(kp, "kp")
+        self._validate_float(kd, "kd")
+        self._validate_float(tau, "tau")
         h = self._joints[index]
-        motor_pos = pos * h.config.direction + h.config.zero_offset
-        motor_vel = vel * h.config.direction
-        motor_tau = tau * h.config.direction
+        clamped_pos = max(h.config.limit_pos_min, min(h.config.limit_pos_max, pos))
+        clamped_vel = max(-h.config.limit_vel, min(h.config.limit_vel, vel))
+        clamped_tau = max(-h.config.limit_tau, min(h.config.limit_tau, tau))
+        motor_pos = clamped_pos * h.config.direction + h.config.zero_offset
+        motor_vel = clamped_vel * h.config.direction
+        motor_tau = clamped_tau * h.config.direction
         self._retry_call(
             lambda: h.motor.send_mit(float(motor_pos), float(motor_vel), float(kp), float(kd), float(motor_tau)),
             op_name=f"send_mit({h.config.name})",
@@ -310,6 +347,8 @@ class MotorBridgeSession:
         for attempt in range(self._op_retry_count):
             try:
                 return fn()
+            except (TypeError, AttributeError, ValueError, NameError, ImportError):
+                raise
             except Exception as exc:
                 last_exc = exc
                 if attempt < self._op_retry_count - 1:
