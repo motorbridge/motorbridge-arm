@@ -5,36 +5,13 @@ sampling with CLIK tracking.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-
 from ..motion.stats import TrajectoryStats, compute_trajectory_stats
 from ..types import Pose6D
 from .clik_tracker import IKParams, JointTrajectoryPoint, track_trajectory
 from .sampler import TrajPlanParams, plan_cartesian_geodesic_trajectory
 
-
-@dataclass(slots=True)
-class TrajStats:
-    """Summary statistics for a tracked trajectory. / 跟踪轨迹的统计摘要。
-
-    Attributes:
-        total_points: Total number of trajectory waypoints.
-            / 轨迹航点总数。
-        success_count: Number of waypoints where IK converged.
-            / IK 收敛的航点数。
-        success_rate: Fraction of successful IK solves.
-            / IK 成功率。
-        max_ik_error: Maximum end-effector error over all waypoints.
-            / 所有航点中最大末端误差。
-        avg_ik_error: Average end-effector error over all waypoints.
-            / 所有航点中平均末端误差。
-    """
-
-    total_points: int = 0
-    success_count: int = 0
-    success_rate: float = 0.0
-    max_ik_error: float = 0.0
-    avg_ik_error: float = 0.0
+# Backward-compatible alias
+TrajStats = TrajectoryStats
 
 
 def plan_joint_space_trajectory(
@@ -121,8 +98,7 @@ def compute_traj_stats(reference: list[Pose6D], actual: list[Pose6D], success_fl
     """Compute tracking error statistics between reference and actual poses.
     / 计算参考位姿与实际位姿之间的跟踪误差统计。
 
-    Delegates to the motion-layer ``compute_trajectory_stats`` function
-    and wraps the result in a ``TrajStats`` dataclass.
+    Delegates to the motion-layer ``compute_trajectory_stats`` function.
 
     Args:
         reference: List of reference (desired) Cartesian poses.

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 
 from ..types import Pose6D
@@ -24,9 +25,15 @@ def pose_position_error(a: Pose6D, b: Pose6D) -> float:
 
 
 def pose_orientation_error(a: Pose6D, b: Pose6D) -> float:
-    dr = a.roll - b.roll
-    dp = a.pitch - b.pitch
-    dy = a.yaw - b.yaw
+    def _wrap(x):
+        while x > math.pi:
+            x -= 2 * math.pi
+        while x < -math.pi:
+            x += 2 * math.pi
+        return x
+    dr = _wrap(a.roll - b.roll)
+    dp = _wrap(a.pitch - b.pitch)
+    dy = _wrap(a.yaw - b.yaw)
     return (dr * dr + dp * dp + dy * dy) ** 0.5
 
 

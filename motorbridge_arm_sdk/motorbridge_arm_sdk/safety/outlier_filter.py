@@ -14,9 +14,12 @@ plausible ranges (e.g. position exceeding 360°, excessive velocity,
 abnormal torque).  All operations are thread-safe.
 """
 
+import logging
 import math
 import threading
 from typing import Any
+
+logger = logging.getLogger(__name__)
 
 
 class OutlierFilter:
@@ -67,6 +70,7 @@ class OutlierFilter:
         self._max_end_effector_distance = max_end_effector_distance
         self._max_velocity = max_velocity
         self._max_torque = max_torque
+        self._num_joints = num_joints
 
         # 线程锁，保证并发安全 / Thread lock for concurrency safety
         self._lock = threading.Lock()
@@ -116,9 +120,46 @@ class OutlierFilter:
             A 3-tuple ``(filtered_pos, filtered_vel, filtered_torq)``
             where outliers have been replaced with ``None``.
         """
-        filtered_pos = self._check_pos(index, pos)
-        filtered_vel = self._check_vel(index, vel)
-        filtered_torq = self._check_torq(index, torq)
+        if index < 0 or index >= self._num_joints:
+            raise IndexError(
+                f"joint index {index} out of range [0, {self._num_joints})"
+            )
+
+        filtered_pos: float | None = None
+        filtered_vel: float | None = None
+        filtered_torq: float | None = None
+
+        with self._lock:
+            # --- position check ---
+            if self._is_pos_outlier(pos):
+                self._increment(index, "pos")
+                logger.warning(
+                    "Outlier detected: joint %d position=%.4f exceeds limit %.4f",
+                    index, pos, self._max_joint_angle,
+                )
+            else:
+                filtered_pos = pos
+
+            # --- velocity check ---
+            if self._is_vel_outlier(vel):
+                self._increment(index, "vel")
+                logger.warning(
+                    "Outlier detected: joint %d velocity=%.4f exceeds limit %.4f",
+                    index, vel, self._max_velocity,
+                )
+            else:
+                filtered_vel = vel
+
+            # --- torque check ---
+            if self._is_torq_outlier(torq):
+                self._increment(index, "torq")
+                logger.warning(
+                    "Outlier detected: joint %d torque=%.4f exceeds limit %.4f",
+                    index, torq, self._max_torque,
+                )
+            else:
+                filtered_torq = torq
+
         return filtered_pos, filtered_vel, filtered_torq
 
     def is_outlier(
@@ -242,39 +283,6 @@ class OutlierFilter:
             return True
         return abs(torq) > self._max_torque
 
-    def _check_pos(self, index: int, pos: float | None) -> float | None:
-        """检查并过滤位置值。
-
-        Check and optionally filter a position value.
-        """
-        if self._is_pos_outlier(pos):
-            with self._lock:
-                self._increment(index, "pos")
-            return None
-        return pos
-
-    def _check_vel(self, index: int, vel: float | None) -> float | None:
-        """检查并过滤速度值。
-
-        Check and optionally filter a velocity value.
-        """
-        if self._is_vel_outlier(vel):
-            with self._lock:
-                self._increment(index, "vel")
-            return None
-        return vel
-
-    def _check_torq(self, index: int, torq: float | None) -> float | None:
-        """检查并过滤力矩值。
-
-        Check and optionally filter a torque value.
-        """
-        if self._is_torq_outlier(torq):
-            with self._lock:
-                self._increment(index, "torq")
-            return None
-        return torq
-
     def _increment(self, index: int, channel: str) -> None:
         """递增指定关节通道的过滤计数（调用方需持有锁）。
 
@@ -284,6 +292,11 @@ class OutlierFilter:
             调用方必须已经持有 :attr:`_lock`。
             The caller **must** already hold :attr:`_lock`.
         """
-        if index not in self._filtered_counts:
-            self._filtered_counts[index] = {"pos": 0, "vel": 0, "torq": 0}
+        if index < 0 or index >= self._num_joints:
+            logger.warning(
+                "Ignoring increment for out-of-range joint index %d (valid: 0..%d)",
+                index,
+                self._num_joints - 1,
+            )
+            return
         self._filtered_counts[index][channel] += 1

@@ -4,6 +4,7 @@ import math
 from dataclasses import dataclass
 
 from ..types import Pose6D
+from ..model.kinematics import _rot_to_rpy
 
 
 def estimate_steps(q0: list[float], q1: list[float], step_rad: float = 0.02) -> int:
@@ -18,14 +19,7 @@ def _apply_profile(t: float, profile: str) -> float:
     t = max(0.0, min(1.0, t))
     if p == "linear":
         return t
-    if p == "min_jerk":
-        t2 = t * t
-        t3 = t2 * t
-        t4 = t3 * t
-        t5 = t4 * t
-        return 10.0 * t3 - 15.0 * t4 + 6.0 * t5
-    # Geodesic typically pairs with smooth timing.
-    if p == "geodesic":
+    if p in ("min_jerk", "geodesic"):
         t2 = t * t
         t3 = t2 * t
         t4 = t3 * t
@@ -68,17 +62,7 @@ def interpolate_pose_geodesic(start: Pose6D, end: Pose6D, steps: int, profile: s
         Ta = T0 * pin.exp6(xi * a)
         t = Ta.translation
         R = Ta.rotation
-        # Keep RPY convention consistent with rest of package.
-        sy = math.sqrt(R[0, 0] * R[0, 0] + R[1, 0] * R[1, 0])
-        singular = sy < 1e-6
-        if not singular:
-            roll = math.atan2(R[2, 1], R[2, 2])
-            pitch = math.atan2(-R[2, 0], sy)
-            yaw = math.atan2(R[1, 0], R[0, 0])
-        else:
-            roll = math.atan2(-R[1, 2], R[1, 1])
-            pitch = math.atan2(-R[2, 0], sy)
-            yaw = 0.0
+        roll, pitch, yaw = _rot_to_rpy(R)
         points.append(
             Pose6D(
                 x=float(t[0]),

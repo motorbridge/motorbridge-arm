@@ -18,10 +18,13 @@ Typical usage / 典型用法::
     print(monitor.fps("feedback"))
 """
 
+import logging
 import threading
 import time
 from collections import deque
 from dataclasses import dataclass
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(slots=True)
@@ -57,7 +60,11 @@ class FPSMonitor:
 
     Args:
         window_size: Maximum number of timestamps retained per channel.
-                     每个通道保留的最大时间戳数量。
+                     Must be >= 2.  Defaults to 100.
+                     每个通道保留的最大时间戳数量。必须 >= 2。默认 100。
+
+    Raises:
+        ValueError: If *window_size* is less than 2.
 
     Example / 示例::
 
@@ -69,6 +76,10 @@ class FPSMonitor:
     """
 
     def __init__(self, window_size: int = 100) -> None:
+        if window_size < 2:
+            raise ValueError(
+                f"window_size must be >= 2, got {window_size}"
+            )
         self._window_size = window_size
         self._channels: dict[str, _ChannelWindow] = {}
         self._lock = threading.Lock()
@@ -94,6 +105,11 @@ class FPSMonitor:
         with self._lock:
             win = self._channels.get(channel)
             if win is None:
+                logger.warning(
+                    "Auto-creating unknown FPS channel %r; "
+                    "consider pre-registering it.",
+                    channel,
+                )
                 win = _ChannelWindow(timestamps=deque(maxlen=self._window_size))
                 self._channels[channel] = win
             win.timestamps.append(now)
@@ -166,3 +182,22 @@ class FPSMonitor:
                 win = self._channels.get(channel)
                 if win is not None:
                     win.timestamps.clear()
+
+    def remove_channel(self, channel: str) -> bool:
+        """Remove a channel entirely from the monitor.
+
+        从监测器中完全移除一个通道。
+
+        Args:
+            channel: Name of the channel to remove.
+                     要移除的通道名称。
+
+        Returns:
+            ``True`` if the channel existed and was removed, ``False`` otherwise.
+            如果通道存在且被移除返回 ``True``，否则返回 ``False``。
+        """
+        with self._lock:
+            if channel in self._channels:
+                del self._channels[channel]
+                return True
+            return False

@@ -2,6 +2,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+_VALID_PARAM_TYPES = {"u8", "u16", "u32", "i8", "i16", "i32", "f32", "f64", "bool"}
+_VALID_ACCESS = {"r", "w", "rw"}
+
 
 @dataclass(frozen=True, slots=True)
 class ParamSpec:
@@ -13,13 +16,31 @@ class ParamSpec:
     unit: str = ""
     desc: str = ""
 
+    def __post_init__(self) -> None:
+        if self.param_type not in _VALID_PARAM_TYPES:
+            raise ValueError(
+                f"invalid param_type {self.param_type!r}; "
+                f"must be one of {sorted(_VALID_PARAM_TYPES)}"
+            )
+        if self.access not in _VALID_ACCESS:
+            raise ValueError(
+                f"invalid access {self.access!r}; "
+                f"must be one of {sorted(_VALID_ACCESS)}"
+            )
+
 
 class ParamRegistry:
     def __init__(self) -> None:
         self._specs: dict[tuple[str, int], ParamSpec] = {}
 
     def register(self, spec: ParamSpec) -> None:
-        self._specs[(spec.vendor.lower(), spec.param_id)] = spec
+        key = (spec.vendor.lower(), spec.param_id)
+        if key in self._specs:
+            raise ValueError(
+                f"duplicate registration for vendor={spec.vendor!r} "
+                f"param_id=0x{spec.param_id:04X}"
+            )
+        self._specs[key] = spec
 
     def get(self, vendor: str, param_id: int) -> ParamSpec | None:
         return self._specs.get((vendor.lower(), param_id))

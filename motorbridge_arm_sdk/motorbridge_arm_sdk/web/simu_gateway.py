@@ -15,6 +15,8 @@ from ..sim import SimArm
 from ..types import Pose6D
 from .protocol_bus import ProtocolBus
 
+_MAX_WAYPOINTS = 512
+
 
 class SimuWsGateway:
     def __init__(self, host: str = "127.0.0.1", port: int = 9011, path: str = "/ws") -> None:
@@ -40,7 +42,7 @@ class SimuWsGateway:
 
         async with serve(self._handler, self.host, self.port, ping_interval=20, ping_timeout=20):
             self._state_task = asyncio.create_task(self._state_publisher())
-            print(f"[simu-gateway] listening ws://{self.host}:{self.port}{self.path}")
+            logger.info("listening ws://%s:%d%s", self.host, self.port, self.path)
             try:
                 await asyncio.Future()
             finally:
@@ -117,6 +119,8 @@ class SimuWsGateway:
             pose = req.get("pose") or {}
             if not wid:
                 return {"ok": False, "req_id": req_id, "op": op, "error": "missing_id"}
+            if len(self._waypoints) >= _MAX_WAYPOINTS:
+                return {"ok": False, "req_id": req_id, "op": op, "error": "max_waypoints_reached"}
             label = str(req.get("label") or pose.get("label") or pose.get("name") or wid).strip() or wid
             self._waypoints[wid] = {
                 "label": label,
@@ -248,18 +252,25 @@ class SimuWsGateway:
 
     async def _run_waypoints(self, from_id: str, to_id: str, duration_s: float, profile: str) -> None:
         try:
+            # Re-validate waypoints still exist before starting motion.
+            if from_id not in self._waypoints:
+                raise ValueError(f"start waypoint {from_id!r} no longer exists")
+            if to_id not in self._waypoints:
+                raise ValueError(f"end waypoint {to_id!r} no longer exists")
+
             pose1 = self._waypoint_pose(from_id)
             pose2 = self._waypoint_pose(to_id)
             q1 = self._sim.solve_ik(pose1)
             self._sim.move_j(q1)
             traj = self._sim.plan_l(pose2, duration_s=duration_s, profile=profile)
+            loop_dt = self._sim.loop_dt_s
             for pt in traj.points:
                 if self._motion_stop:
                     self._motion_status = {"running": False, "name": "stopped", "from_id": from_id, "to_id": to_id}
                     await self._broadcast_event("task", {"event": "stopped", "task": self._motion_status})
                     return
                 self._sim.set_joint_positions(pt.q)
-                await asyncio.sleep(max(0.001, self._sim._cfg.loop_dt_s))
+                await asyncio.sleep(max(0.001, loop_dt))
             self._motion_status = {"running": False, "name": "done", "from_id": from_id, "to_id": to_id}
             await self._broadcast_event("task", {"event": "done", "task": self._motion_status})
         except asyncio.CancelledError:
@@ -277,11 +288,17 @@ class SimuWsGateway:
                 await self._broadcast_event("task", {"event": "done", "task": self._motion_status})
                 return
 
+            # Re-validate all waypoints still exist before starting motion.
+            for wid in ids:
+                if wid not in self._waypoints:
+                    raise ValueError(f"waypoint {wid!r} no longer exists")
+
             # Align once to the first point, then move continuously point-to-point.
             first_pose = self._waypoint_pose(ids[0])
             q0 = self._sim.solve_ik(first_pose)
             self._sim.move_j(q0)
 
+            loop_dt = self._sim.loop_dt_s
             for i in range(1, len(ids)):
                 if self._motion_stop:
                     self._motion_status = {"running": False, "name": "stopped", "ids": ids}
@@ -297,7 +314,7 @@ class SimuWsGateway:
                         await self._broadcast_event("task", {"event": "stopped", "task": self._motion_status})
                         return
                     self._sim.set_joint_positions(pt.q)
-                    await asyncio.sleep(max(0.001, self._sim._cfg.loop_dt_s))
+                    await asyncio.sleep(max(0.001, loop_dt))
             self._motion_status = {"running": False, "name": "done", "ids": ids}
             await self._broadcast_event("task", {"event": "done", "task": self._motion_status})
         except asyncio.CancelledError:

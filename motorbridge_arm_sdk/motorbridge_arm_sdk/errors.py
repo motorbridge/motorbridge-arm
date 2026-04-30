@@ -21,5 +21,8 @@ class ArmError(Exception):
     code: ArmErrorCode
     message: str
 
+    def __post_init__(self):
+        super().__init__(self.message)
+
     def __str__(self) -> str:
         return f"{self.code.value}: {self.message}"

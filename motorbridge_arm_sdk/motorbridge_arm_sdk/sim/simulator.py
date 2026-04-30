@@ -29,7 +29,10 @@ class SimTrajectory:
 
 
 class SimArm:
-    """Model-only arm simulator without motor hardware."""
+    """Model-only arm simulator without motor hardware.
+
+    仅使用模型的机械臂模拟器，无需电机硬件。
+    """
 
     @staticmethod
     def _profile_from_name(profile: str) -> TrajProfile:
@@ -44,6 +47,14 @@ class SimArm:
         self._cfg = config
         self._q = list(config.default_home or [0.0 for _ in config.joints])
         self._kin = Kinematics(config.urdf_path, config.ee_frame)
+
+    @property
+    def loop_dt_s(self) -> float:
+        """Control loop period in seconds.
+
+        控制循环周期（秒）。
+        """
+        return self._cfg.loop_dt_s
 
     def set_joint_positions(self, q: list[float]) -> None:
         if len(q) != len(self._cfg.joints):
@@ -130,14 +141,28 @@ class SimArm:
         q = self.get_joint_positions()
         dt = duration_s / max(1, len(poses) - 1)
         out: list[SimTrajectoryPoint] = []
+        num_joints = len(self._cfg.joints)
         for i, pose in enumerate(poses):
-            q = self.solve_ik(pose)
+            q_new = self.solve_ik(pose)
+            # Check IK convergence: if the solved position is far from the
+            # requested pose, mark the point as an IK failure.
+            solved_pose = self._kin.forward(q_new)
+            pos_err = (
+                (solved_pose.x - pose.x) ** 2
+                + (solved_pose.y - pose.y) ** 2
+                + (solved_pose.z - pose.z) ** 2
+            ) ** 0.5
+            ik_ok = pos_err < 1e-3
+            if not ik_ok:
+                logger.warning(
+                    "plan_c step %d: IK did not converge (pos_err=%.4f m)", i, pos_err
+                )
             out.append(
                 SimTrajectoryPoint(
                     time=i * dt,
-                    q=list(q),
-                    pose=self._kin.forward(q),
-                    ik_success=True,
+                    q=list(q_new),
+                    pose=solved_pose,
+                    ik_success=ik_ok,
                 )
             )
         result = SimTrajectory(points=out, duration_s=duration_s)
@@ -173,11 +198,35 @@ class SimArm:
         realtime: bool = False,
         visualizer=None,
     ) -> None:
+        """Play back a trajectory by stepping through its points.
+
+        逐步回放轨迹点。
+
+        Args:
+            trajectory: The trajectory to play back.
+                        要回放的轨迹。
+            realtime: If ``True``, sleep between points to match real time.
+                      若为 ``True``，则在点之间休眠以匹配真实时间。
+            visualizer: Optional visualizer object with ``update()`` and
+                        ``draw_actual_path()`` methods.
+                        可选的可视化对象，需提供 ``update()`` 和
+                        ``draw_actual_path()`` 方法。
+
+        Raises:
+            ValueError: If any trajectory point has a joint vector whose length
+                        does not match the configured number of joints.
+        """
         import time
 
+        num_joints = len(self._cfg.joints)
         prev_t = 0.0
         path: list[list[float]] = []
         for pt in trajectory.points:
+            if len(pt.q) != num_joints:
+                raise ValueError(
+                    f"trajectory point at t={pt.time:.4f} has {len(pt.q)} "
+                    f"joints, expected {num_joints}"
+                )
             self._q = list(pt.q)
             if visualizer is not None:
                 visualizer.update(pt.q)

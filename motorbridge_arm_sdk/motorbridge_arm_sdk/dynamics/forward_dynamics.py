@@ -112,7 +112,9 @@ def forward_dynamics_from_nle(drm: DynamicsRobotModel, q=None, v=None, tau=None)
     _check_tau_shape(drm, tv, "forward_dynamics_from_nle")
 
     drm.pin.computeAllTerms(drm.model, drm.data, qv, vv)
-    return np.linalg.solve(np.asarray(drm.data.M), tv - np.asarray(drm.data.nle))
+    M = np.asarray(drm.data.M, dtype=float)
+    M = 0.5 * (M + M.T)
+    return np.linalg.solve(M, tv - np.asarray(drm.data.nle, dtype=float))
 
 
 # Backward-compatible alias

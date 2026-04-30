@@ -146,7 +146,10 @@ class Kinematics:
 
         pin = self._pin
         model = self._model
-        data = self._data
+        # NOTE: Create fresh data per call so concurrent inverse() calls do not
+        # race on shared mutable pinocchio Data.  The overhead is negligible
+        # compared to the IK loop itself.
+        data = model.createData()
         nq = model.nq
         q = np.zeros(nq)
         n = min(nq, len(q_seed))

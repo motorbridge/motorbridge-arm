@@ -26,6 +26,16 @@ class JointConfig:
     limit_vel: float = 2.0
     limit_tau: float = 5.0
 
+    def __post_init__(self):
+        if self.direction == 0:
+            raise ValueError(f"joint '{self.name}': direction cannot be 0")
+        if self.limit_pos_min >= self.limit_pos_max:
+            raise ValueError(f"joint '{self.name}': limit_pos_min ({self.limit_pos_min}) must be < limit_pos_max ({self.limit_pos_max})")
+        if self.limit_vel < 0:
+            raise ValueError(f"joint '{self.name}': limit_vel must be >= 0")
+        if self.limit_tau < 0:
+            raise ValueError(f"joint '{self.name}': limit_tau must be >= 0")
+
 
 @dataclass(slots=True)
 class ArmConfig:

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import threading
 import time
 from dataclasses import dataclass
 from enum import IntEnum
@@ -33,38 +34,45 @@ class MotorBridgeSession:
         self._adapter_registry = adapter_registry or create_default_adapter_registry()
         self._op_retry_count = 3
         self._op_retry_delay_s = 0.01
+        self._lock = threading.Lock()
+
+    def _check_index(self, index: int) -> None:
+        if index < 0 or index >= len(self._joints):
+            raise ArmError(ArmErrorCode.ERR_CONFIG, f"joint index {index} out of range [0, {len(self._joints)})")
 
     @property
     def joints(self) -> list[JointHandle]:
         return self._joints
 
     def connect(self) -> None:
-        if self._controller is None:
-            try:
-                from motorbridge import Controller
-            except Exception as exc:
-                raise ArmError(
-                    ArmErrorCode.ERR_BUS,
-                    "motorbridge package not available; install dependency before hardware run",
-                ) from exc
-            self._controller = Controller(self._channel)
+        with self._lock:
+            if self._controller is None:
+                try:
+                    from motorbridge import Controller
+                except Exception as exc:
+                    raise ArmError(
+                        ArmErrorCode.ERR_BUS,
+                        "motorbridge package not available; install dependency before hardware run",
+                    ) from exc
+                self._controller = Controller(self._channel)
 
     def close(self) -> None:
-        if self._controller is not None:
-            try:
-                self.disable_all()
-            except Exception as exc:
-                logger.warning("disable_all() during close failed: %s", exc)
-            try:
-                self._controller.shutdown()
-            except Exception as exc:
-                logger.warning("controller.shutdown() during close failed: %s", exc)
-            try:
-                self._controller.close()
-            except Exception as exc:
-                logger.warning("controller.close() during close failed: %s", exc)
-            self._controller = None
-        self._joints.clear()
+        with self._lock:
+            if self._controller is not None:
+                try:
+                    self.disable_all()
+                except Exception as exc:
+                    logger.warning("disable_all() during close failed: %s", exc)
+                try:
+                    self._controller.shutdown()
+                except Exception as exc:
+                    logger.warning("controller.shutdown() during close failed: %s", exc)
+                try:
+                    self._controller.close()
+                except Exception as exc:
+                    logger.warning("controller.close() during close failed: %s", exc)
+                self._controller = None
+            self._joints.clear()
 
     def __enter__(self) -> "MotorBridgeSession":
         self.connect()
@@ -96,6 +104,8 @@ class MotorBridgeSession:
         Returns a list of joint names that did NOT reach enabled state within
         the timeout.
         """
+        if self._controller is None:
+            raise ArmError(ArmErrorCode.ERR_STATE, "controller not connected")
         self._controller.enable_all()
         deadline = time.monotonic() + timeout_ms / 1000.0
         not_ready = {h.config.name for h in self._joints}
@@ -128,6 +138,7 @@ class MotorBridgeSession:
             )
 
     def ensure_mode_joint(self, index: int, mode: int, timeout_ms: int = 1000) -> None:
+        self._check_index(index)
         h = self._joints[index]
         self._retry_call(
             lambda: h.motor.ensure_mode(mode, timeout_ms),
@@ -164,6 +175,7 @@ class MotorBridgeSession:
             h.motor.send_mit(float(motor_pos), float(motor_vel), float(kp[i]), float(kd[i]), float(motor_tau))
 
     def set_pos_vel_joint(self, index: int, q_target: float, vlim: float) -> None:
+        self._check_index(index)
         h = self._joints[index]
         motor_target = q_target * h.config.direction + h.config.zero_offset
         self._retry_call(
@@ -173,6 +185,7 @@ class MotorBridgeSession:
         )
 
     def set_vel_joint(self, index: int, vel: float) -> None:
+        self._check_index(index)
         h = self._joints[index]
         motor_vel = vel * h.config.direction
         self._retry_call(
@@ -182,6 +195,7 @@ class MotorBridgeSession:
         )
 
     def set_mit_joint(self, index: int, pos: float, vel: float, kp: float, kd: float, tau: float = 0.0) -> None:
+        self._check_index(index)
         h = self._joints[index]
         motor_pos = pos * h.config.direction + h.config.zero_offset
         motor_vel = vel * h.config.direction
@@ -201,6 +215,7 @@ class MotorBridgeSession:
             )
 
     def set_zero_joint(self, index: int) -> None:
+        self._check_index(index)
         h = self._joints[index]
         self._retry_call(
             lambda: h.motor.disable(),
@@ -226,6 +241,7 @@ class MotorBridgeSession:
             )
 
     def set_param(self, index: int, param_id: int, param_type: str, value: int | float) -> None:
+        self._check_index(index)
         h = self._joints[index]
         vendor = h.config.vendor.lower()
         method_name = self._adapter_registry.get_write_method(vendor, param_type)
@@ -239,6 +255,7 @@ class MotorBridgeSession:
         self._retry_call(lambda: fn(param_id, cast_val), method_name)
 
     def get_param(self, index: int, param_id: int, param_type: str, timeout_ms: int = 1000) -> int | float:
+        self._check_index(index)
         h = self._joints[index]
         vendor = h.config.vendor.lower()
         method_name = self._adapter_registry.get_read_method(vendor, param_type)
@@ -250,12 +267,13 @@ class MotorBridgeSession:
 
     def _retry_call(self, fn, op_name: str, err_code: ArmErrorCode = ArmErrorCode.ERR_TIMEOUT):
         last_exc: Exception | None = None
-        for _ in range(self._op_retry_count):
+        for attempt in range(self._op_retry_count):
             try:
                 return fn()
             except Exception as exc:
                 last_exc = exc
-                time.sleep(self._op_retry_delay_s)
+                if attempt < self._op_retry_count - 1:
+                    time.sleep(self._op_retry_delay_s)
         msg = f"{op_name} failed after {self._op_retry_count} retries"
         if last_exc is not None:
             msg = f"{msg}: {last_exc}"

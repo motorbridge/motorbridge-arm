@@ -19,6 +19,7 @@ from .session import ModeLike, MotorBridgeSession
 from .telemetry.fps_monitor import FPSMonitor
 from .telemetry.recorder import Recorder
 from .telemetry.state_cache import StateCache
+from .errors import ArmError, ArmErrorCode
 from .types import ArmConfig, ArmRunState, ArmState, FaultState, JointState, PayloadConfig, Pose6D, ToolConfig
 from .ipc.shared_state import SharedArmState
 from .model.kinematics import Kinematics
@@ -139,6 +140,7 @@ class Arm:
         Stops any running control loop, forces the runtime state to
         DISCONNECTED, and closes the underlying MotorBridge session.
         """
+        self._abort_event.set()
         self.stop_control_loop()
         self._runtime.force(ArmRunState.DISCONNECTED)
         self._session.close()
@@ -157,6 +159,12 @@ class Arm:
         """
         self.close()
         self.connect()
+        if self._cfg.shared_memory_name is not None and self._shm is None:
+            self._shm = SharedArmState(
+                name=self._cfg.shared_memory_name,
+                num_joints=len(self._cfg.joints),
+                create=True,
+            )
 
     def enable(self) -> None:
         """Enable all joint motors and transition to the ENABLED state.
@@ -168,8 +176,9 @@ class Arm:
             RuntimeError: If the runtime is not in a state that allows
                 transition to ENABLED (e.g. currently DISCONNECTED).
         """
+        self._require_connected()
         self._runtime.transition(ArmRunState.ENABLED)
-        self._session.enable_all()
+        self._session.enable_all_with_poll()
         self._cache.update_run_state(ArmRunState.ENABLED)
 
     def disable(self) -> None:
@@ -178,6 +187,9 @@ class Arm:
         If the arm is currently RUNNING it is first transitioned to ENABLED
         before being disabled.  All joint motors are de-energised.
         """
+        self._require_connected()
+        if self._runtime.state == ArmRunState.DISCONNECTED:
+            return
         if self._runtime.state == ArmRunState.RUNNING:
             self._runtime.transition(ArmRunState.ENABLED)
         self._runtime.transition(ArmRunState.IDLE)
@@ -192,6 +204,7 @@ class Arm:
         and :meth:`enable` to resume normal operation after an e-stop.
         """
         self._abort_event.set()
+        self.stop_control_loop()
         self._session.disable_all()
         self._runtime.force(ArmRunState.FAULT)
         self._cache.update_run_state(ArmRunState.FAULT)
@@ -208,22 +221,27 @@ class Arm:
             An :class:`ArmState` snapshot reflecting the latest hardware
             readings.
         """
+        self._require_connected()
         self._session.request_feedback_all()
         for i, h in enumerate(self._session.joints):
             raw = h.motor.get_state()
             if raw is None:
+                logger.warning("joint %d (%s) returned None state, skipping", i, h.config.name)
+                continue
+            if h.config.direction == 0:
+                logger.error("joint %s has direction=0, skipping", h.config.name)
                 continue
             q = (raw.pos - h.config.zero_offset) / h.config.direction
             # 过滤异常值 / Filter outlier values
             filt_q, filt_vel, filt_torq = self._outlier_filter.filter_joint(i, q, raw.vel, raw.torq)
             if filt_q is not q or filt_vel is not raw.vel or filt_torq is not raw.torq:
                 logger.warning(
-                    "outlier filtered on joint %d (%s): pos=%s vel=%s torq=%s",
+                    "outlier filtered on joint %d (%s): pos=%s->%s vel=%s->%s torq=%s->%s",
                     i,
                     h.config.name,
-                    "FILTERED" if filt_q is None else f"{filt_q:.4f}",
-                    "FILTERED" if filt_vel is None else f"{filt_vel:.4f}",
-                    "FILTERED" if filt_torq is None else f"{filt_torq:.4f}",
+                    f"{q:.4f}", f"{filt_q:.4f}" if filt_q is not None else "FILTERED",
+                    f"{raw.vel:.4f}", f"{filt_vel:.4f}" if filt_vel is not None else "FILTERED",
+                    f"{raw.torq:.4f}", f"{filt_torq:.4f}" if filt_torq is not None else "FILTERED",
                 )
             self._cache.update_joint(
                 i,
@@ -275,7 +293,7 @@ class Arm:
             out.append(0.0 if j.pos is None else float(j.pos))
         return out
 
-    def get_positions(self, request: bool = True):
+    def get_positions(self, request: bool = True) -> list[float]:
         """Return joint positions, optionally refreshing from hardware.
 
         This is a convenience alias for :meth:`get_joint_positions`.  The
@@ -292,7 +310,7 @@ class Arm:
         st = self.refresh_state() if request else self.get_state()
         return [0.0 if j.pos is None else float(j.pos) for j in st.joints]
 
-    def get_velocities(self, request: bool = True):
+    def get_velocities(self, request: bool = True) -> list[float]:
         """Return joint velocities, optionally refreshing from hardware.
 
         Args:
@@ -306,7 +324,7 @@ class Arm:
         st = self.refresh_state() if request else self.get_state()
         return [0.0 if j.vel is None else float(j.vel) for j in st.joints]
 
-    def get_torques(self, request: bool = True):
+    def get_torques(self, request: bool = True) -> list[float]:
         """Return joint torques, optionally refreshing from hardware.
 
         Args:
@@ -320,7 +338,7 @@ class Arm:
         st = self.refresh_state() if request else self.get_state()
         return [0.0 if j.torq is None else float(j.torq) for j in st.joints]
 
-    def get_state_vectors(self):
+    def get_state_vectors(self) -> tuple[list[float], list[float], list[float]]:
         """Return positions, velocities, and torques in a single call.
 
         Performs a single hardware refresh and extracts all three vectors
@@ -396,6 +414,7 @@ class Arm:
             ValueError: If the target list length does not match the number
                 of joints or values are outside joint limits after clamping.
         """
+        self._require_connected()
         q_target = self._safety.clamp_joint_targets(q_target)
         self._run_joint_target(q_target, vlim=vlim, profile=profile or self._cfg.motion_profile)
 
@@ -450,7 +469,10 @@ class Arm:
             kd: List of damping gains.  Defaults to zeros.
             tau: List of feed-forward torques in Nm.  Defaults to zeros.
         """
+        self._require_connected()
         n = len(self._cfg.joints)
+        if len(pos) != n:
+            raise ValueError(f"pos length {len(pos)} does not match num_joints {n}")
         vel = vel if vel is not None else [0.0] * n
         kp = kp if kp is not None else [0.0] * n
         kd = kd if kd is not None else [0.0] * n
@@ -470,7 +492,10 @@ class Arm:
                 one element, or ``None`` to use the minimum joint velocity
                 limit from the arm configuration.
         """
+        self._require_connected()
         n = len(self._cfg.joints)
+        if len(pos) != n:
+            raise ValueError(f"pos length {len(pos)} does not match num_joints {n}")
         if vlim is None:
             vmax = min(j.limit_vel for j in self._cfg.joints)
         else:
@@ -489,6 +514,10 @@ class Arm:
         Args:
             vel: List of target velocities in rad/s, one per joint.
         """
+        self._require_connected()
+        n = len(self._cfg.joints)
+        if len(vel) != n:
+            raise ValueError(f"vel length {len(vel)} does not match num_joints {n}")
         self.mode_vel()
         self._session.set_vel_all(list(vel))
 
@@ -628,11 +657,20 @@ class Arm:
         Raises:
             ValueError: If IK fails to converge for any waypoint.
         """
-        start = self.get_pose()
+        self._require_connected()
+        q_now = self.get_joint_positions()
+        start = self._kin.forward(q_now)
+        start = Pose6D(
+            x=start.x + self._tool.x,
+            y=start.y + self._tool.y,
+            z=start.z + self._tool.z,
+            roll=start.roll + self._tool.roll,
+            pitch=start.pitch + self._tool.pitch,
+            yaw=start.yaw + self._tool.yaw,
+        )
         profile_name = profile or self._cfg.motion_profile
         dist = ((target.x - start.x) ** 2 + (target.y - start.y) ** 2 + (target.z - start.z) ** 2) ** 0.5
         steps = max(2, int(dist / max(step_m, 1e-4)) + 1)
-        q_now = self.get_joint_positions()
         joint_points: list[list[float]] = []
 
         # Primary path: unified cartesian trajectory + CLIK tracking with joint-limit-aware null space.
@@ -705,7 +743,17 @@ class Arm:
         Raises:
             ValueError: If IK fails to converge for any waypoint.
         """
-        start = self.get_pose()
+        self._require_connected()
+        q_now = self.get_joint_positions()
+        start = self._kin.forward(q_now)
+        start = Pose6D(
+            x=start.x + self._tool.x,
+            y=start.y + self._tool.y,
+            z=start.z + self._tool.z,
+            roll=start.roll + self._tool.roll,
+            pitch=start.pitch + self._tool.pitch,
+            yaw=start.yaw + self._tool.yaw,
+        )
         poses = interpolate_pose_circular(
             start,
             target,
@@ -713,7 +761,6 @@ class Arm:
             steps,
             profile=profile or self._cfg.motion_profile,
         )
-        q_now = self.get_joint_positions()
         joint_points: list[list[float]] = []
 
         # Primary path: CLIK tracker with null-space avoidance.
@@ -746,7 +793,7 @@ class Arm:
                 joint_points.append(self._safety.clamp_joint_targets(q_now))
         self._run_joint_points(joint_points, vlim=vlim, motion_name="move_c")
 
-    def read_param(self, joint_index: int, param_id: int, param_type: str | None = None, timeout_ms: int = 1000):
+    def read_param(self, joint_index: int, param_id: int, param_type: str | None = None, timeout_ms: int = 1000) -> int | float:
         """Read a vendor-specific motor parameter from a single joint.
 
         The parameter type is resolved from the parameter registry when
@@ -764,6 +811,8 @@ class Arm:
             The parameter value read from the motor, type depends on
             *param_type*.
         """
+        if not (0 <= joint_index < len(self._cfg.joints)):
+            raise IndexError(f"joint_index {joint_index} out of range [0, {len(self._cfg.joints)})")
         spec = self._registry.get(self._cfg.joints[joint_index].vendor, param_id)
         ptype = param_type or (spec.param_type if spec else "f32")
         value = self._session.get_param(joint_index, param_id, ptype, timeout_ms)
@@ -783,6 +832,8 @@ class Arm:
             param_type: Data type string (e.g. ``"f32"``, ``"u32"``).  If
                 ``None``, the type is looked up in the parameter registry.
         """
+        if not (0 <= joint_index < len(self._cfg.joints)):
+            raise IndexError(f"joint_index {joint_index} out of range [0, {len(self._cfg.joints)})")
         spec = self._registry.get(self._cfg.joints[joint_index].vendor, param_id)
         ptype = param_type or (spec.param_type if spec else "f32")
         self._session.set_param(joint_index, param_id, ptype, value)
@@ -966,14 +1017,20 @@ class Arm:
         dt = self._cfg.loop_dt_s if rate_hz is None or rate_hz <= 0 else 1.0 / rate_hz
 
         def _loop():
+            next_time = time.perf_counter()
             while not self._ctrl_stop_event.is_set():
-                t0 = time.perf_counter()
                 self._fps.tick("control_loop")
                 if self._ctrl_fn is not None:
-                    self._ctrl_fn(self, dt)
-                dt_sleep = dt - (time.perf_counter() - t0)
+                    try:
+                        self._ctrl_fn(self, dt)
+                    except Exception:
+                        logger.exception("control loop callback raised exception")
+                next_time += dt
+                dt_sleep = next_time - time.perf_counter()
                 if dt_sleep > 0:
                     time.sleep(dt_sleep)
+                else:
+                    next_time = time.perf_counter()
 
         self._ctrl_thread = threading.Thread(target=_loop, daemon=True)
         self._ctrl_thread.start()
@@ -988,6 +1045,8 @@ class Arm:
         if self._ctrl_thread is not None:
             if threading.current_thread() is not self._ctrl_thread:
                 self._ctrl_thread.join(timeout=1.0)
+                if self._ctrl_thread.is_alive():
+                    logger.warning("control loop thread did not join within timeout; possible zombie thread")
             self._ctrl_thread = None
 
     def _run_joint_target(self, q_target: list[float], vlim: float, profile: str = "linear") -> None:
@@ -998,6 +1057,8 @@ class Arm:
         self._run_joint_points(points, vlim=vlim, motion_name="move_j", steps=steps)
 
     def _run_joint_points(self, points: list[list[float]], vlim: float, motion_name: str, steps: int | None = None) -> None:
+        if self._abort_event.is_set():
+            raise ArmError(ArmErrorCode.ERR_STATE, "abort event is set, clear faults first")
         self._abort_event.clear()
         self._runtime.transition(ArmRunState.RUNNING)
         self._session.ensure_mode_all(ModeLike.POS_VEL)
@@ -1005,8 +1066,9 @@ class Arm:
         try:
             self._executor.run(points, self._session.set_pos_vel_all, vlim, abort_event=self._abort_event)
         finally:
-            self._runtime.transition(ArmRunState.ENABLED)
-            self._cache.update_run_state(ArmRunState.ENABLED)
+            if self._runtime.state == ArmRunState.RUNNING:
+                self._runtime.transition(ArmRunState.ENABLED)
+                self._cache.update_run_state(ArmRunState.ENABLED)
         payload = {"vlim": vlim, "points": len(points)}
         if steps is not None:
             payload["steps"] = steps
@@ -1040,6 +1102,10 @@ class Arm:
             for i, j in enumerate(self._cfg.joints):
                 if j.name == self._cfg.gripper_joint:
                     return i
+            raise ValueError(
+                f"gripper_joint '{self._cfg.gripper_joint}' not found in configured joints: "
+                f"{[j.name for j in self._cfg.joints]}"
+            )
         for i, j in enumerate(self._cfg.joints):
             if "gripper" in j.name.lower():
                 return i
@@ -1054,6 +1120,11 @@ class Arm:
             if jc.name == joint:
                 return i
         raise KeyError(f"unknown joint name: {joint}")
+
+    def _require_connected(self) -> None:
+        """Raise ArmError if the arm is in the DISCONNECTED state."""
+        if self._runtime.state == ArmRunState.DISCONNECTED:
+            raise ArmError(ArmErrorCode.ERR_STATE, "arm is not connected")
 
     def __enter__(self) -> "Arm":
         return self

@@ -4,20 +4,13 @@ from dataclasses import dataclass
 
 from ..model.inverse_kinematics import IKParams
 from ..types import Pose6D
-from ..trajectory.clik_tracker import track_trajectory
+from ..trajectory.clik_tracker import JointTrajectoryPoint, track_trajectory
 from ..trajectory.sampler import TrajPlanParams, plan_cartesian_geodesic_trajectory
 from ..trajectory.trajectory_planner import compute_traj_stats
 
 
 # Backward-compatible alias.
 CliKParams = IKParams
-
-
-@dataclass(slots=True)
-class JointTrajectoryPoint:
-    time: float
-    q: list[float]
-    ik_success: bool
 
 
 def plan_se3_geodesic(start: Pose6D, end: Pose6D, duration_s: float, dt_s: float = 0.02) -> list[Pose6D]:

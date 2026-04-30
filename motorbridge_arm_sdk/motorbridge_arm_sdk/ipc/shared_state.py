@@ -107,6 +107,7 @@ class SharedArmState:
         self._total_size = _DATA_OFFSET + _JOINT_SIZE * num_joints
         self._shm: Any | None = None
         self._active = False
+        self._created = create
 
         if SharedMemory is None:
             logger.warning(
@@ -351,6 +352,18 @@ class SharedArmState:
                     self._name,
                     exc,
                 )
+            if self._created:
+                try:
+                    self._shm.unlink()
+                except Exception as exc:
+                    logger.debug(
+                        "Error unlinking shared memory '%s': %s "
+                        "取消链接共享内存 '%s' 时出错: %s",
+                        self._name,
+                        exc,
+                        self._name,
+                        exc,
+                    )
             self._shm = None
             self._active = False
 
@@ -392,9 +405,8 @@ class SharedArmState:
             spinlock (1B) + padding (3B)
         """
         buf = self._shm.buf
-        # Zero-fill entire buffer first / 先用零填充整个缓冲区
-        for i in range(self._total_size):
-            buf[i] = 0
+        # Zero-fill entire buffer in one bulk write / 一次性批量填零
+        buf[:] = b'\x00' * self._total_size
         # Write magic, tick=0, num_joints / 写入 magic、tick=0、num_joints
         struct.pack_into(_HEADER_FMT, buf, 0, _MAGIC, 0, self._num_joints)
 

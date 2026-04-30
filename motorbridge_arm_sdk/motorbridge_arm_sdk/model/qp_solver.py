@@ -88,20 +88,46 @@ class QPSolver:
         self.joint_vel_limit = joint_vel_limit
 
     # ------------------------------------------------------------------
+    # Private helpers / 私有辅助方法
+    # ------------------------------------------------------------------
+
+    def _adaptive_damping(self, jacobian, damping: float) -> float:
+        """Compute adaptive damping based on manipulability. / 根据可操作度计算自适应阻尼。"""
+        import numpy as np
+
+        w = self.manipulability(jacobian)
+        if w < self.manipulability_threshold:
+            adaptive = self.damping_base * (
+                self.manipulability_threshold / max(w, 1e-12)
+            )
+            return max(damping, adaptive)
+        return damping
+
+    def _null_projector(self, J, lam) -> tuple:
+        """Compute the damped least-squares pseudo-inverse and null-space projector. / 计算阻尼最小二乘伪逆和零空间投影矩阵。"""
+        import numpy as np
+
+        m, n = J.shape
+        JJT_reg = J @ J.T + lam * np.eye(m)
+        J_pinv = J.T @ np.linalg.solve(JJT_reg, J)  # (n, n)
+        N = np.eye(n) - J_pinv
+        return JJT_reg, J_pinv, N
+
+    # ------------------------------------------------------------------
     # Public API / 公开接口
     # ------------------------------------------------------------------
 
     def manipulability(self, jacobian: "np.ndarray") -> float:  # noqa: F821
-        """Compute the manipulability index *w = sqrt(det(J J^T))*.
+        """Compute the manipulability index via SVD.
 
-        / 计算可操作度指标 *w = sqrt(det(J J^T))*。
+        / 通过 SVD 计算可操作度指标。
 
-        For a non-redundant (6-DOF) manipulator this reduces to the
-        product of the singular values of *J*.  A value near zero
-        indicates a singularity.
+        Uses the product of singular values of *J* which is numerically
+        more stable than the determinant-based formulation for
+        ill-conditioned Jacobians.
 
-        对于非冗余（6 自由度）机械臂，该值等于 *J* 奇异值的乘积。
-        值接近零表示处于奇异位形。
+        使用 *J* 奇异值的乘积，对于病态雅可比矩阵比基于行列式的
+        公式数值更稳定。
 
         Args:
             jacobian: Task-space Jacobian of shape ``(m, n)`` where
@@ -116,12 +142,8 @@ class QPSolver:
         """
         import numpy as np
 
-        JJT = jacobian @ jacobian.T
-        det_val = float(np.linalg.det(JJT))
-        # Clamp to zero to avoid sqrt of a tiny negative number due to
-        # floating-point roundoff.
-        # 将负值钳制为零，避免浮点舍入导致对负数开方。
-        return math.sqrt(max(0.0, det_val))
+        s = np.linalg.svd(jacobian, compute_uv=False)
+        return float(np.prod(s))
 
     def singularity_index(self, jacobian: "np.ndarray") -> float:  # noqa: F821
         """Return a normalised singularity index in [0, 1].
@@ -216,34 +238,12 @@ class QPSolver:
         m, n = J.shape
 
         # --- Adaptive damping / 自适应阻尼 ---
-        w = self.manipulability(J)
-        if w < self.manipulability_threshold:
-            # Scale damping inversely with manipulability so that it
-            # grows without bound as w -> 0.
-            # 阻尼随可操作度反比增长，w -> 0 时趋向无穷。
-            adaptive = self.damping_base * (
-                self.manipulability_threshold / max(w, 1e-12)
-            )
-            lam = max(damping, adaptive)
-        else:
-            lam = damping
+        lam = self._adaptive_damping(J, damping)
 
         # --- Damped least-squares solution / 阻尼最小二乘解 ---
         # dq = J^T (J J^T + lambda I)^{-1} dx
-        JJT = J @ J.T  # (m, m)
-        JJT_reg = JJT + lam * np.eye(m)
+        JJT_reg, _, N = self._null_projector(J, lam)
         dq_primary = J.T @ np.linalg.solve(JJT_reg, dx)
-
-        # --- Null-space projection / 零空间投影 ---
-        # Null-space projector:
-        #   N = I - J^# J
-        # where J^# = J^T (J J^T + lambda I)^{-1} is the damped
-        # pseudo-inverse.
-        # 零空间投影矩阵：
-        #   N = I - J^# J
-        # 其中 J^# = J^T (J J^T + lambda I)^{-1} 为阻尼伪逆。
-        J_pinv = J.T @ np.linalg.solve(JJT_reg, J)  # (n, n)
-        N = np.eye(n) - J_pinv
 
         # Secondary task: joint-limit avoidance via null-space gradient.
         # 次级任务：通过零空间梯度进行关节限位规避。
@@ -316,28 +316,15 @@ class QPSolver:
 
         J = jacobian
         dx = error
-        m, n = J.shape
 
-        # Adaptive damping (same logic as solve).
-        # 自适应阻尼（与 solve 相同逻辑）。
-        w = self.manipulability(J)
-        if w < self.manipulability_threshold:
-            adaptive = self.damping_base * (
-                self.manipulability_threshold / max(w, 1e-12)
-            )
-            lam = max(damping, adaptive)
-        else:
-            lam = damping
+        # Adaptive damping.
+        # 自适应阻尼。
+        lam = self._adaptive_damping(J, damping)
 
         # Primary solution.
         # 主任务解。
-        JJT_reg = J @ J.T + lam * np.eye(m)
+        JJT_reg, _, N = self._null_projector(J, lam)
         dq_primary = J.T @ np.linalg.solve(JJT_reg, dx)
-
-        # Null-space projector.
-        # 零空间投影矩阵。
-        J_pinv = J.T @ np.linalg.solve(JJT_reg, J)
-        N = np.eye(n) - J_pinv
 
         # Null-space term: project gradient, optionally blend with
         # dq_prev for continuity.

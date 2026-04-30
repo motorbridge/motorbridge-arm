@@ -74,7 +74,7 @@ def compute_mass_matrix(drm: DynamicsRobotModel, q=None) -> np.ndarray:
         return _eye_2d(n)
     _check_q_shape(drm, qv, "compute_mass_matrix")
     drm.pin.crba(drm.model, drm.data, qv)
-    return drm.data.M.copy()
+    return np.asarray(drm.data.M, dtype=float).copy()
 
 
 def compute_coriolis_matrix(drm: DynamicsRobotModel, q=None, v=None) -> np.ndarray:
@@ -109,7 +109,7 @@ def compute_coriolis_matrix(drm: DynamicsRobotModel, q=None, v=None) -> np.ndarr
     _check_q_shape(drm, qv, "compute_coriolis_matrix")
     _check_v_shape(drm, vv, "compute_coriolis_matrix")
     drm.pin.computeCoriolisMatrix(drm.model, drm.data, qv, vv)
-    return drm.data.C.copy()
+    return np.asarray(drm.data.C, dtype=float).copy()
 
 
 def compute_gravity_vector(drm: DynamicsRobotModel, q=None) -> np.ndarray:
@@ -138,7 +138,7 @@ def compute_gravity_vector(drm: DynamicsRobotModel, q=None) -> np.ndarray:
         return _zeros_1d(int(len(qv)))
     _check_q_shape(drm, qv, "compute_gravity_vector")
     drm.pin.computeGeneralizedGravity(drm.model, drm.data, qv)
-    return drm.data.g.copy()
+    return np.asarray(drm.data.g, dtype=float).copy()
 
 
 def compute_nle(drm: DynamicsRobotModel, q=None, v=None) -> np.ndarray:
@@ -173,7 +173,7 @@ def compute_nle(drm: DynamicsRobotModel, q=None, v=None) -> np.ndarray:
     _check_q_shape(drm, qv, "compute_nle")
     _check_v_shape(drm, vv, "compute_nle")
     drm.pin.nonLinearEffects(drm.model, drm.data, qv, vv)
-    return drm.data.nle.copy()
+    return np.asarray(drm.data.nle, dtype=float).copy()
 
 
 def compute_all_terms(drm: DynamicsRobotModel, q=None, v=None) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
@@ -212,7 +212,11 @@ def compute_all_terms(drm: DynamicsRobotModel, q=None, v=None) -> tuple[np.ndarr
     _check_q_shape(drm, qv, "compute_all_terms")
     _check_v_shape(drm, vv, "compute_all_terms")
     drm.pin.computeAllTerms(drm.model, drm.data, qv, vv)
-    return drm.data.M.copy(), drm.data.C.copy(), drm.data.g.copy()
+    return (
+        np.asarray(drm.data.M, dtype=float).copy(),
+        np.asarray(drm.data.C, dtype=float).copy(),
+        np.asarray(drm.data.g, dtype=float).copy(),
+    )
 
 
 # Backward-compatible alias
