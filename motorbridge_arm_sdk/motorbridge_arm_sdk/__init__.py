@@ -17,6 +17,10 @@ __all__ = [
     "ArmController",
     "ArmEndPos",
     "Gripper",
+    "RealtimeController",
+    "CartesianController",
+    "EEFCommand",
+    "RobotProfileFactory",
 ]
 
 
@@ -41,4 +45,20 @@ def __getattr__(name: str):
         from .gripper import Gripper
 
         return Gripper
+    if name == "RealtimeController":
+        from .controllers import RealtimeController
+
+        return RealtimeController
+    if name == "CartesianController":
+        from .controllers import CartesianController
+
+        return CartesianController
+    if name == "EEFCommand":
+        from .controllers import EEFCommand
+
+        return EEFCommand
+    if name == "RobotProfileFactory":
+        from .model.robot_profiles import RobotProfileFactory
+
+        return RobotProfileFactory
     raise AttributeError(name)
