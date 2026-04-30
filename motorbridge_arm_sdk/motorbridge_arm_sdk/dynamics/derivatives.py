@@ -147,8 +147,9 @@ def compute_mass_matrix_derivatives(drm: DynamicsRobotModel, q=None):
 
     Each slice ``(j, :, :)`` is an ``(nv, nv)`` matrix giving the
     partial derivative of ``M(q)`` with respect to the j-th configuration
-    variable.  Computed via central finite differences of CRBA for broad
-    Pinocchio version compatibility.
+    variable.  Uses Pinocchio's analytical ``computeMassMatrixDerivatives``
+    when available, falling back to central finite differences of CRBA for
+    older Pinocchio versions.
 
     Args:
         drm: Dynamics robot model (holds Pinocchio model + data).
@@ -169,8 +170,19 @@ def compute_mass_matrix_derivatives(drm: DynamicsRobotModel, q=None):
         return np.zeros((n, n, n), dtype=float)
     _check_q_shape(drm, qv, "compute_mass_matrix_derivatives")
 
+    # Try analytical method first (more accurate).
+    try:
+        drm.pin.computeAllTerms(drm.model, drm.data, qv, np.zeros(drm.nv))
+        drm.pin.computeMassMatrixDerivatives(drm.model, drm.data, qv)
+        dMdq = np.zeros((drm.nq, drm.nv, drm.nv), dtype=float)
+        for j in range(drm.nq):
+            dMdq[j] = np.asarray(drm.data.dMdq[j], dtype=float).copy()
+        return dMdq
+    except (AttributeError, TypeError):
+        pass
+
+    # Finite-difference fallback for older Pinocchio versions.
     dMdq = np.zeros((drm.nq, drm.nv, drm.nv), dtype=float)
-    # Portable fallback: finite difference around CRBA for broad pinocchio version compatibility.
     eps = 1e-6
     for j in range(drm.nq):
         qp = qv.copy()

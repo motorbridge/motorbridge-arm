@@ -25,6 +25,10 @@ class JointConfig:
     limit_pos_max: float = 3.1415926
     limit_vel: float = 2.0
     limit_tau: float = 5.0
+    vel_kp: float = 10.0
+    vel_ki: float = 0.1
+    pos_kp: float = 50.0
+    pos_ki: float = 0.5
 
     def __post_init__(self):
         if self.direction == 0:

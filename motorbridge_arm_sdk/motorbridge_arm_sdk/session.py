@@ -129,6 +129,32 @@ class MotorBridgeSession:
             return
         self._controller.disable_all()
 
+    def disable_all_with_poll(self, timeout_ms: int = 5000, poll_interval_ms: int = 100) -> list[str]:
+        """Disable all joints and poll until each reports status_code == 0 (disabled).
+
+        Returns a list of joint names that did NOT reach disabled state within
+        the timeout.
+        """
+        if self._controller is None:
+            return []
+        self._controller.disable_all()
+        deadline = time.monotonic() + timeout_ms / 1000.0
+        not_ready = {h.config.name for h in self._joints}
+        while not_ready and time.monotonic() < deadline:
+            time.sleep(poll_interval_ms / 1000.0)
+            for h in self._joints:
+                if h.config.name in not_ready:
+                    try:
+                        h.motor.request_feedback()
+                        st = h.motor.get_state()
+                        if st is not None and getattr(st, "status_code", None) == 0:
+                            not_ready.discard(h.config.name)
+                    except Exception:
+                        pass
+        if not_ready:
+            logger.warning("disable_all_with_poll: joints still enabled: %s", not_ready)
+        return list(not_ready)
+
     def ensure_mode_all(self, mode: int, timeout_ms: int = 1000) -> None:
         for h in self._joints:
             self._retry_call(

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 
 from ..arm import Arm
@@ -7,6 +8,8 @@ from ..motion.geodesic import compute_geodesic_stats, plan_se3_geodesic
 from ..trajectory.clik_tracker import IKParams
 from ..trajectory.trajectory_planner import plan_joint_space_trajectory
 from ..types import Pose6D
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(slots=True)
@@ -23,6 +26,11 @@ class ArmEndPos:
     Provides IK-based and trajectory-based motion commands using the
     parent :class:`Arm` instance's kinematics and motion execution pipeline.
 
+    Supports use as a context manager::
+
+        with ArmEndPos(arm) as ctrl:
+            ctrl.move_to_ik(target_pose)
+
     Args:
         arm: A connected :class:`Arm` instance.
     """
@@ -32,13 +40,58 @@ class ArmEndPos:
 
     @property
     def _kin(self):
-        """Shortcut to the arm's kinematics solver."""
         return self.arm.kinematics
 
     @property
     def _cfg(self):
-        """Shortcut to the arm configuration."""
         return self.arm.config
+
+    def start(self) -> None:
+        """Connect the arm, enable motors, and switch to POS_VEL mode.
+
+        Equivalent to calling ``arm.connect()``, ``arm.enable()``, and
+        ``arm.mode_pos_vel()`` in sequence.
+        """
+        self.arm.connect()
+        self.arm.enable()
+        self.arm.mode_pos_vel()
+
+    def end(self) -> None:
+        """Drive to home position and disconnect.
+
+        Calls :meth:`safe_home` followed by ``arm.close()``.
+        """
+        try:
+            self.safe_home()
+        except Exception as exc:
+            logger.warning("safe_home() during end() failed: %s", exc)
+        self.arm.close()
+
+    def safe_home(self, vlim: float = 0.3, timeout_s: float = 30.0) -> None:
+        """Move the arm to its home (zero) position at reduced velocity.
+
+        Uses a timeout to prevent indefinite blocking if motion stalls.
+
+        Args:
+            vlim: Velocity limit as a fraction of maximum.  Defaults to
+                ``0.3`` (30 % of maximum) for safety.
+            timeout_s: Maximum seconds to wait for the motion to complete.
+                Defaults to 30 s.
+        """
+        home = self._cfg.default_home if self._cfg.default_home else [0.0] * self.arm.num_joints
+        done = threading.Event()
+
+        def _go():
+            try:
+                self.arm.move_j(home, vlim=vlim, profile="min_jerk")
+            except Exception as exc:
+                logger.warning("safe_home move failed: %s", exc)
+            done.set()
+
+        t = threading.Thread(target=_go, daemon=True)
+        t.start()
+        if not done.wait(timeout=timeout_s):
+            logger.warning("safe_home timed out after %.1f s", timeout_s)
 
     def move_to_ik(self, target: Pose6D, vlim: float = 1.0) -> bool:
         """Move to a target pose using IK + joint-space motion.
@@ -90,3 +143,9 @@ class ArmEndPos:
         actual = [self._kin.forward(p.q) for p in jt]
         s = compute_geodesic_stats(ref, actual, success_flags=[p.ik_success for p in jt])
         return TrajResult(ok=True, points=s.total_points, max_pos_err=s.max_position_error, avg_pos_err=s.avg_position_error)
+
+    def __enter__(self) -> ArmEndPos:
+        return self
+
+    def __exit__(self, *args) -> None:
+        self.end()

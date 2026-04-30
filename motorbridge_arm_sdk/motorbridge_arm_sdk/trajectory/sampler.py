@@ -19,13 +19,22 @@ class TrajProfile(enum.Enum):
             / 参数空间线性插值。
         MIN_JERK: Minimum-jerk (5th-order polynomial) profile for smooth motion.
             / 最小加加速度（五阶多项式）曲线，实现平滑运动。
+        TRAPEZOID: Trapezoidal velocity profile with constant acceleration,
+            constant velocity cruise, and constant deceleration phases.
+            / 梯形速度曲线（匀加速-匀速-匀减速）。
         GEODESIC: Geodesic profile on SE(3).
             / SE(3) 上的测地线曲线。
+        CUBIC: Cubic Hermite smoothstep profile (s = -2t^3 + 3t^2).
+            Zero velocity at both endpoints, smooth interpolation.
+            / 三次埃尔米特平滑曲线（s = -2t^3 + 3t^2）。
+            两端速度为零，平滑插值。
     """
 
     LINEAR = "linear"
     MIN_JERK = "min_jerk"
+    TRAPEZOID = "trapezoid"
     GEODESIC = "geodesic"
+    CUBIC = "cubic"
 
 
 @dataclass(slots=True)
@@ -39,10 +48,15 @@ class TrajPlanParams:
         profile: Motion profile used to parameterize the interpolation.
             Default is ``MIN_JERK``.
             / 用于参数化插值的运动曲线。默认 ``MIN_JERK``。
+        accel_ratio: Fraction of total time spent in acceleration/deceleration
+            phases for the trapezoid profile. Clamped to [0.01, 0.49].
+            Default is 0.25.
+            / 梯形曲线中加速/减速阶段占总时间的比例，限制在 [0.01, 0.49]。默认 0.25。
     """
 
     dt: float = 0.02
     profile: TrajProfile = TrajProfile.MIN_JERK
+    accel_ratio: float = 0.25
 
 
 @dataclass(slots=True)
@@ -140,12 +154,12 @@ def plan_cartesian_geodesic_trajectory(
     n = max(2, int(duration / max(params.dt, 1e-4)) + 1)
     profile = params.profile.value
 
-    poses = interpolate_pose_geodesic(start_pose, end_pose, n, profile=profile)
+    poses = interpolate_pose_geodesic(start_pose, end_pose, n, profile=profile, accel_ratio=params.accel_ratio)
     traj = CartesianTrajectory()
     dt = duration / (n - 1)
     for i, pose in enumerate(poses):
         t = i * dt
         # Preserve consistent timing profile mapping even if interpolation backend changes.
-        _ = _apply_profile(i / (n - 1), profile)
+        _ = _apply_profile(i / (n - 1), profile, accel_ratio=params.accel_ratio)
         traj.add_point(t, pose)
     return CartesianTrajectoryResult(trajectory=traj, n_points=n)

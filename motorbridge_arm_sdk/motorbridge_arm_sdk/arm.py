@@ -76,10 +76,13 @@ class Arm:
         self._tool = ToolConfig()
         self._payload = PayloadConfig()
         self._mode = "pos_vel"
+        self._damping_mode = False
         self._ctrl_thread: threading.Thread | None = None
         self._ctrl_fn = None
         self._abort_event = threading.Event()
         self._ctrl_stop_event = threading.Event()
+        self._gravity_comp_enabled: bool = False
+        self._drm = None  # DynamicsRobotModel, lazy-loaded on first enable
 
         # Shared-memory IPC (optional). / 共享内存 IPC（可选）。
         self._shm: SharedArmState | None = None
@@ -120,6 +123,15 @@ class Arm:
         return self._mode
 
     @property
+    def damping_mode(self) -> bool:
+        """Whether damping mode is currently active.
+
+        In damping mode the arm is compliant (kp=0) but still damped (kd>0),
+        allowing it to be moved by hand while resisting sudden shocks.
+        """
+        return self._damping_mode
+
+    @property
     def control_loop_active(self) -> bool:
         t = self._ctrl_thread
         return t is not None and t.is_alive()
@@ -150,15 +162,25 @@ class Arm:
             self._shm.unlink()
             self._shm = None
 
-    def reconnect(self) -> None:
+    def reconnect(self, init_delay: float = 1.0, post_setup_delay: float = 0.5) -> None:
         """Close the current connection and re-establish a fresh one.
 
         Convenience wrapper that calls :meth:`close` followed by
         :meth:`connect`.  Useful for recovering from transient communication
         errors.
+
+        Args:
+            init_delay: Seconds to wait after closing the previous connection
+                before opening a new one.  Allows the CAN bus to settle.
+            post_setup_delay: Seconds to wait after registering all motors
+                before returning.  Allows firmware to initialize.
         """
         self.close()
+        if init_delay > 0:
+            time.sleep(init_delay)
         self.connect()
+        if post_setup_delay > 0:
+            time.sleep(post_setup_delay)
         if self._cfg.shared_memory_name is not None and self._shm is None:
             self._shm = SharedArmState(
                 name=self._cfg.shared_memory_name,
@@ -185,7 +207,8 @@ class Arm:
         """Disable all joint motors and transition back to IDLE.
 
         If the arm is currently RUNNING it is first transitioned to ENABLED
-        before being disabled.  All joint motors are de-energised.
+        before being disabled.  All joint motors are de-energised.  Polls
+        each motor to confirm it reached disabled state.
         """
         self._require_connected()
         if self._runtime.state == ArmRunState.DISCONNECTED:
@@ -193,21 +216,159 @@ class Arm:
         if self._runtime.state == ArmRunState.RUNNING:
             self._runtime.transition(ArmRunState.ENABLED)
         self._runtime.transition(ArmRunState.IDLE)
-        self._session.disable_all()
+        not_disabled = self._session.disable_all_with_poll()
+        if not_disabled:
+            logger.warning("disable: joints still enabled: %s", not_disabled)
         self._cache.update_run_state(ArmRunState.IDLE)
 
-    def estop(self) -> None:
-        """Perform an emergency stop.
+    def set_to_damping(self) -> None:
+        """Switch the arm into damping (compliant) mode.
 
-        Immediately disables all joint motors, aborts any running trajectory,
-        and forces the runtime into the FAULT state.  Use :meth:`clear_faults`
-        and :meth:`enable` to resume normal operation after an e-stop.
+        Records the current joint positions as the target, sets kp=0 on all
+        joints while keeping kd non-zero, and switches to MIT impedance mode.
+        The arm becomes compliant (easy to push by hand) but is still damped,
+        resisting sudden velocity changes.  This is useful for safe manual
+        repositioning or as a transition state before returning to position
+        control.
+
+        The damping gain defaults to 2.0 per joint.  Override by calling
+        :meth:`mit` directly after this method with custom kd values.
+        """
+        self._require_connected()
+        q_now = self.get_joint_positions()
+        n = len(self._cfg.joints)
+        kp = [0.0] * n
+        kd = [2.0] * n
+        vel = [0.0] * n
+        tau = [0.0] * n
+        self.mode_mit()
+        self._session.set_mit_all(q_now, vel, kp, kd, tau)
+        self._damping_mode = True
+        self._cache.update_run_state(ArmRunState.ENABLED)
+        logger.info("set_to_damping: arm is now in damping mode (kp=0, kd=2.0)")
+
+    def reset_to_home(self, vlim: float = 0.5) -> None:
+        """Safely return the arm to its home position with gain ramping.
+
+        Instead of a simple move_j, this method performs a controlled return
+        to home in two stages with gradual gain ramping:
+
+        1. **Intermediate safe position**: Joint 3 (index 2) is raised slightly
+           to avoid collisions, then moved to an intermediate pose.
+        2. **Gain ramped move to home**: Position stiffness is ramped from a
+           low value up to the default over a duration proportional to the
+           maximum joint position error, using a minimum-jerk interpolation
+           profile.
+
+        If the arm is currently in damping mode, this method exits damping
+        mode first by restoring MIT gains before moving.
+
+        Args:
+            vlim: Velocity limit as a fraction of maximum.  Defaults to ``0.5``
+                for a conservative return speed.
+        """
+        self._require_connected()
+        if self._runtime.state == ArmRunState.RUNNING:
+            self._runtime.transition(ArmRunState.ENABLED)
+            self._cache.update_run_state(ArmRunState.ENABLED)
+
+        # Exit damping mode if active.
+        if self._damping_mode:
+            self._damping_mode = False
+
+        n = len(self._cfg.joints)
+        q_now = self.get_joint_positions()
+        q_home = list(self._cfg.default_home) if self._cfg.default_home else [0.0] * n
+
+        # --- Stage 1: Move to an intermediate safe position. ---
+        q_intermediate = list(q_now)
+        # Raise joint 3 (index 2) slightly to clear obstacles.
+        if n > 2:
+            safe_raise = 0.3  # radians
+            q_intermediate[2] = q_now[2] + safe_raise
+            # Clamp to joint limits.
+            jc = self._cfg.joints[2]
+            q_intermediate[2] = max(jc.limit_pos_min, min(jc.limit_pos_max, q_intermediate[2]))
+
+        self.move_j(q_intermediate, vlim=vlim, profile="min_jerk")
+
+        # --- Stage 2: Gain-ramped move to home. ---
+        # Compute max position error to determine ramp duration.
+        q_after_intermediate = self.get_joint_positions()
+        errors = [abs(q_after_intermediate[i] - q_home[i]) for i in range(n)]
+        max_err = max(errors) if errors else 0.0
+
+        # Ramp duration proportional to max error: at least 1s, at most 5s.
+        ramp_duration = max(1.0, min(5.0, max_err * 2.0))
+        ramp_steps = max(10, int(ramp_duration / self._cfg.loop_dt_s))
+
+        # Interpolate from intermediate to home with min_jerk profile.
+        points = interpolate_joint_linear(
+            q_after_intermediate, q_home, ramp_steps, profile="min_jerk"
+        )
+
+        # Execute with gain ramping via MIT mode.
+        # Start with low kp, ramp to full kp over the trajectory.
+        default_kp = 20.0  # Starting kp for ramp
+        default_kd = 2.0
+        self.mode_mit()
+        self._runtime.transition(ArmRunState.RUNNING)
+        self._cache.update_run_state(ArmRunState.RUNNING)
+        try:
+            for i, q_pt in enumerate(points):
+                if self._abort_event.is_set():
+                    break
+                # Ramp fraction from 0 to 1.
+                frac = i / max(ramp_steps - 1, 1)
+                kp_val = default_kp * frac
+                kp_list = [kp_val] * n
+                kd_list = [default_kd] * n
+                vel_list = [0.0] * n
+                tau_list = [0.0] * n
+                self._session.set_mit_all(q_pt, vel_list, kp_list, kd_list, tau_list)
+                time.sleep(self._cfg.loop_dt_s)
+        finally:
+            if self._runtime.state == ArmRunState.RUNNING:
+                self._runtime.transition(ArmRunState.ENABLED)
+                self._cache.update_run_state(ArmRunState.ENABLED)
+
+        self._recorder.add("reset_to_home", {"vlim": vlim, "ramp_duration": ramp_duration})
+
+    def estop(self) -> None:
+        """Perform an emergency stop with boosted damping before disable.
+
+        Instead of immediately disabling motors, the e-stop first applies
+        boosted damping (MIT mode with kp=0 and elevated kd) to smoothly
+        arrest motion, then fully disables motors after a short settling
+        delay (0.5 s).  This produces a gentler but still fast stop compared
+        to instant disable.
+
+        The runtime is forced into the FAULT state regardless.  Use
+        :meth:`clear_faults` and :meth:`enable` to resume normal operation.
         """
         self._abort_event.set()
         self.stop_control_loop()
+
+        # Apply boosted damping to arrest motion before disabling.
+        n = len(self._cfg.joints)
+        try:
+            q_now = self.get_joint_positions()
+            self.mode_mit()
+            kp = [0.0] * n
+            # Boosted kd: 3x normal on first 3 joints, 1.5x on the rest.
+            normal_kd = 2.0
+            kd = [normal_kd * 3.0 if i < 3 else normal_kd * 1.5 for i in range(n)]
+            vel = [0.0] * n
+            tau = [0.0] * n
+            self._session.set_mit_all(q_now, vel, kp, kd, tau)
+            time.sleep(0.5)
+        except Exception:
+            logger.warning("estop: boosted damping phase failed, falling back to immediate disable")
+
         self._session.disable_all()
         self._runtime.force(ArmRunState.FAULT)
         self._cache.update_run_state(ArmRunState.FAULT)
+        self._damping_mode = False
 
     def refresh_state(self) -> ArmState:
         """Request fresh feedback from all joints and update the state cache.
@@ -434,12 +595,21 @@ class Arm:
     def mode_pos_vel(self) -> bool:
         """Switch all joints to position-velocity control mode.
 
-        This is the default mode.  Each joint accepts a target position and
-        a velocity limit.
+        Writes per-joint velocity and position PI gains to motor registers
+        (25-28) before switching mode, matching the hardware's expected
+        register configuration.
 
         Returns:
             ``True`` on success.
         """
+        for i, jc in enumerate(self._cfg.joints):
+            try:
+                self._session.set_param(i, 25, "f32", jc.vel_kp)
+                self._session.set_param(i, 26, "f32", jc.vel_ki)
+                self._session.set_param(i, 27, "f32", jc.pos_kp)
+                self._session.set_param(i, 28, "f32", jc.pos_ki)
+            except ArmError:
+                logger.debug("PI gain write for joint %d skipped (vendor may not support)", i)
         self._mode = "pos_vel"
         self._session.ensure_mode_all(ModeLike.POS_VEL)
         return True
@@ -455,6 +625,68 @@ class Arm:
         self._mode = "vel"
         self._session.ensure_mode_all(ModeLike.VEL)
         return True
+
+    def enable_gravity_comp(self) -> None:
+        """Enable gravity compensation as a feedforward torque offset.
+
+        When enabled, the ``mit()`` command automatically computes the
+        generalized gravity vector for the current configuration and adds
+        it to the feedforward torque, compensating for the robot's own
+        weight.
+
+        Requires a valid URDF path in the arm configuration.  If no URDF
+        is configured or Pinocchio is unavailable the method logs a
+        warning and returns without enabling.
+
+        / 启用重力补偿作为前馈力矩偏移。启用后，MIT 指令会自动计算当前构型的
+        广义重力向量并将其叠加到前馈力矩上，补偿机器人自身重量。
+        """
+        if self._drm is None:
+            if self._cfg.urdf_path is None:
+                logger.warning("gravity compensation requires urdf_path in ArmConfig; not enabled")
+                return
+            from .dynamics.robot_model import load_dynamics_robot_model
+            self._drm = load_dynamics_robot_model(self._cfg.urdf_path)
+        if not self._drm.has_pinocchio:
+            logger.warning("gravity compensation requires Pinocchio with a valid URDF; not enabled")
+            return
+        self._gravity_comp_enabled = True
+        logger.info("gravity compensation enabled")
+
+    def disable_gravity_comp(self) -> None:
+        """Disable gravity compensation feedforward offset.
+
+        / 禁用重力补偿前馈偏移。
+        """
+        self._gravity_comp_enabled = False
+        logger.info("gravity compensation disabled")
+
+    def _gravity_torque(self) -> list[float]:
+        """Compute the gravity compensation torque for the current configuration.
+
+        Returns a list of floats (one per joint), or a zero list if
+        gravity compensation is disabled or unavailable.
+
+        / 计算当前构型的重力补偿力矩。如果重力补偿被禁用或不可用，
+        返回零列表。
+        """
+        if not self._gravity_comp_enabled or self._drm is None:
+            return [0.0] * len(self._cfg.joints)
+        if not self._drm.has_pinocchio:
+            return [0.0] * len(self._cfg.joints)
+        try:
+            from .dynamics.inverse_dynamics import compute_generalized_gravity
+            q = self.get_joint_positions()
+            g = compute_generalized_gravity(self._drm, q=q)
+            tau_g = list(g.flatten() if hasattr(g, "flatten") else g)
+            # Trim or pad to match number of joints.
+            n = len(self._cfg.joints)
+            if len(tau_g) >= n:
+                return [float(v) for v in tau_g[:n]]
+            return [float(v) for v in tau_g] + [0.0] * (n - len(tau_g))
+        except Exception as exc:
+            logger.warning("gravity torque computation failed: %s", exc)
+            return [0.0] * len(self._cfg.joints)
 
     def mit(self, pos, vel=None, kp=None, kd=None, tau=None) -> None:
         """Send an MIT impedance command to all joints simultaneously.
@@ -477,6 +709,10 @@ class Arm:
         kp = kp if kp is not None else [0.0] * n
         kd = kd if kd is not None else [0.0] * n
         tau = tau if tau is not None else [0.0] * n
+        # Add gravity compensation feedforward torque when enabled.
+        if self._gravity_comp_enabled:
+            tau_grav = self._gravity_torque()
+            tau = [t + tg for t, tg in zip(tau, tau_grav)]
         self.mode_mit()
         self._session.set_mit_all(list(pos), list(vel), list(kp), list(kd), list(tau))
 

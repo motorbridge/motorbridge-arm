@@ -2,9 +2,39 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass
+from typing import Any
 
 from ..types import Pose6D
 from ..model.kinematics import _rot_to_rpy
+
+
+def se3_interpolate(a: Any, b: Any, s: float) -> Any:
+    """Interpolate between two SE(3) poses on the geodesic.
+
+    Computes ``a * exp6(log6(a^{-1} * b) * s)`` using Pinocchio.  Accepts
+    ``pin.SE3`` objects or (4, 4) ndarrays as input.
+
+    Args:
+        a: Start pose (pin.SE3 or 4x4 ndarray).
+        b: End pose (pin.SE3 or 4x4 ndarray).
+        s: Interpolation parameter in ``[0, 1]``.
+
+    Returns:
+        A ``pin.SE3`` object at parameter *s* along the geodesic from *a*
+        to *b*.
+
+    Raises:
+        ImportError: If Pinocchio is not available.
+    """
+    import pinocchio as pin
+    import numpy as np
+
+    if not isinstance(a, pin.SE3):
+        a = pin.SE3(np.array(a, dtype=float))
+    if not isinstance(b, pin.SE3):
+        b = pin.SE3(np.array(b, dtype=float))
+    xi = pin.log6(a.inverse() * b).vector
+    return a * pin.exp6(xi * max(0.0, min(1.0, s)))
 
 
 def estimate_steps(q0: list[float], q1: list[float], step_rad: float = 0.02) -> int:
@@ -14,7 +44,7 @@ def estimate_steps(q0: list[float], q1: list[float], step_rad: float = 0.02) -> 
     return max(2, int(math.ceil(max_delta / max(step_rad, 1e-6))) + 1)
 
 
-def _apply_profile(t: float, profile: str) -> float:
+def _apply_profile(t: float, profile: str, accel_ratio: float = 0.25) -> float:
     p = profile.lower().strip()
     t = max(0.0, min(1.0, t))
     if p == "linear":
@@ -25,6 +55,20 @@ def _apply_profile(t: float, profile: str) -> float:
         t4 = t3 * t
         t5 = t4 * t
         return 10.0 * t3 - 15.0 * t4 + 6.0 * t5
+    if p == "trapezoid":
+        a = max(0.01, min(0.49, accel_ratio))
+        if t < a:
+            s = 0.5 * t * t / a
+        elif t < 1.0 - a:
+            s = a / 2.0 + (t - a)
+        else:
+            dt = t - (1.0 - a)
+            s = 1.0 - a / 2.0 + dt - 0.5 * dt * dt / a
+        return max(0.0, min(1.0, s))
+    if p == "cubic":
+        # Cubic Hermite smoothstep: s = -2t^3 + 3t^2
+        # Zero velocity at both endpoints, smooth interpolation.
+        return -2.0 * t * t * t + 3.0 * t * t
     return t
 
 
@@ -39,7 +83,7 @@ def _rpy_to_rot(roll: float, pitch: float, yaw: float):
     ]
 
 
-def interpolate_pose_geodesic(start: Pose6D, end: Pose6D, steps: int, profile: str = "geodesic") -> list[Pose6D]:
+def interpolate_pose_geodesic(start: Pose6D, end: Pose6D, steps: int, profile: str = "geodesic", accel_ratio: float = 0.25) -> list[Pose6D]:
     if steps < 2:
         steps = 2
 
@@ -58,7 +102,7 @@ def interpolate_pose_geodesic(start: Pose6D, end: Pose6D, steps: int, profile: s
 
     points: list[Pose6D] = []
     for k in range(steps):
-        a = _apply_profile(k / (steps - 1), profile)
+        a = _apply_profile(k / (steps - 1), profile, accel_ratio)
         Ta = T0 * pin.exp6(xi * a)
         t = Ta.translation
         R = Ta.rotation
@@ -76,24 +120,24 @@ def interpolate_pose_geodesic(start: Pose6D, end: Pose6D, steps: int, profile: s
     return points
 
 
-def interpolate_joint_linear(q0: list[float], q1: list[float], steps: int, profile: str = "linear") -> list[list[float]]:
+def interpolate_joint_linear(q0: list[float], q1: list[float], steps: int, profile: str = "linear", accel_ratio: float = 0.25) -> list[list[float]]:
     if len(q0) != len(q1):
         raise ValueError("q0/q1 dimension mismatch")
     if steps < 2:
         steps = 2
     points: list[list[float]] = []
     for k in range(steps):
-        a = _apply_profile(k / (steps - 1), profile)
+        a = _apply_profile(k / (steps - 1), profile, accel_ratio)
         points.append([(1.0 - a) * s + a * t for s, t in zip(q0, q1)])
     return points
 
 
-def interpolate_pose_linear(start: Pose6D, end: Pose6D, steps: int, profile: str = "linear") -> list[Pose6D]:
+def interpolate_pose_linear(start: Pose6D, end: Pose6D, steps: int, profile: str = "linear", accel_ratio: float = 0.25) -> list[Pose6D]:
     if steps < 2:
         steps = 2
     points: list[Pose6D] = []
     for k in range(steps):
-        a = _apply_profile(k / (steps - 1), profile)
+        a = _apply_profile(k / (steps - 1), profile, accel_ratio)
         points.append(
             Pose6D(
                 x=(1.0 - a) * start.x + a * end.x,
@@ -114,7 +158,7 @@ class ArcSpec:
     normal_z: float = 1.0
 
 
-def interpolate_pose_circular(start: Pose6D, end: Pose6D, arc: ArcSpec, steps: int, profile: str = "linear") -> list[Pose6D]:
+def interpolate_pose_circular(start: Pose6D, end: Pose6D, arc: ArcSpec, steps: int, profile: str = "linear", accel_ratio: float = 0.25) -> list[Pose6D]:
     if steps < 2:
         steps = 2
     sx = start.x - arc.center_x
@@ -141,7 +185,7 @@ def interpolate_pose_circular(start: Pose6D, end: Pose6D, arc: ArcSpec, steps: i
 
     points: list[Pose6D] = []
     for k in range(steps):
-        t = _apply_profile(k / (steps - 1), profile)
+        t = _apply_profile(k / (steps - 1), profile, accel_ratio)
         a = a0 + d * t
         x = arc.center_x + r * math.cos(a)
         y = arc.center_y + r * math.sin(a)

@@ -16,6 +16,7 @@ __all__ = [
     "SimArm",
     "ArmController",
     "ArmEndPos",
+    "Gripper",
 ]
 
 
@@ -36,4 +37,8 @@ def __getattr__(name: str):
         from .controllers import ArmEndPos
 
         return ArmEndPos
+    if name == "Gripper":
+        from .gripper import Gripper
+
+        return Gripper
     raise AttributeError(name)
