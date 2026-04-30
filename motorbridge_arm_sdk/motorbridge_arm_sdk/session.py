@@ -113,22 +113,7 @@ class MotorBridgeSession:
         if self._controller is None:
             raise ArmError(ArmErrorCode.ERR_STATE, "controller not connected")
         self._controller.enable_all()
-        deadline = time.monotonic() + timeout_ms / 1000.0
-        not_ready = {h.config.name for h in self._joints}
-        while not_ready and time.monotonic() < deadline:
-            time.sleep(poll_interval_ms / 1000.0)
-            for h in self._joints:
-                if h.config.name in not_ready:
-                    try:
-                        h.motor.request_feedback()
-                        st = h.motor.get_state()
-                        if st is not None and getattr(st, "status_code", None) == 1:
-                            not_ready.discard(h.config.name)
-                    except Exception:
-                        pass
-        if not_ready:
-            logger.warning("enable_all_with_poll: joints not ready: %s", not_ready)
-        return list(not_ready)
+        return self._poll_until_status(1, timeout_ms, poll_interval_ms)
 
     def disable_all(self) -> None:
         if self._controller is None:
@@ -144,6 +129,9 @@ class MotorBridgeSession:
         if self._controller is None:
             return []
         self._controller.disable_all()
+        return self._poll_until_status(0, timeout_ms, poll_interval_ms)
+
+    def _poll_until_status(self, target_code: int, timeout_ms: int, poll_interval_ms: int) -> list[str]:
         deadline = time.monotonic() + timeout_ms / 1000.0
         not_ready = {h.config.name for h in self._joints}
         while not_ready and time.monotonic() < deadline:
@@ -153,12 +141,13 @@ class MotorBridgeSession:
                     try:
                         h.motor.request_feedback()
                         st = h.motor.get_state()
-                        if st is not None and getattr(st, "status_code", None) == 0:
+                        if st is not None and getattr(st, "status_code", None) == target_code:
                             not_ready.discard(h.config.name)
                     except Exception:
                         pass
         if not_ready:
-            logger.warning("disable_all_with_poll: joints still enabled: %s", not_ready)
+            action = "enable" if target_code == 1 else "disable"
+            logger.warning("%s_all_with_poll: joints not ready: %s", action, not_ready)
         return list(not_ready)
 
     def ensure_mode_all(self, mode: int, timeout_ms: int = 1000) -> None:
@@ -183,14 +172,22 @@ class MotorBridgeSession:
             raise ArmError(ArmErrorCode.ERR_CONFIG, "q length mismatch")
         for target, h in zip(q, self._joints):
             motor_target = target * h.config.direction + h.config.zero_offset
-            h.motor.send_pos_vel(float(motor_target), float(vlim))
+            self._retry_call(
+                lambda mt=motor_target, vl=vlim, hh=h: hh.motor.send_pos_vel(float(mt), float(vl)),
+                op_name=f"send_pos_vel({h.config.name})",
+                err_code=ArmErrorCode.ERR_TIMEOUT,
+            )
 
     def set_vel_all(self, vel: list[float]) -> None:
         if len(vel) != len(self._joints):
             raise ArmError(ArmErrorCode.ERR_CONFIG, "vel length mismatch")
         for target, h in zip(vel, self._joints):
             motor_vel = target * h.config.direction
-            h.motor.send_vel(float(motor_vel))
+            self._retry_call(
+                lambda mv=motor_vel, hh=h: hh.motor.send_vel(float(mv)),
+                op_name=f"send_vel({h.config.name})",
+                err_code=ArmErrorCode.ERR_TIMEOUT,
+            )
 
     def set_mit_all(self, pos: list[float], vel: list[float], kp: list[float], kd: list[float], tau: list[float] | None = None) -> None:
         n = len(self._joints)
@@ -204,7 +201,11 @@ class MotorBridgeSession:
             motor_pos = pos[i] * h.config.direction + h.config.zero_offset
             motor_vel = vel[i] * h.config.direction
             motor_tau = tau[i] * h.config.direction
-            h.motor.send_mit(float(motor_pos), float(motor_vel), float(kp[i]), float(kd[i]), float(motor_tau))
+            self._retry_call(
+                lambda mp=motor_pos, mv=motor_vel, kpi=kp[i], kdi=kd[i], mt=motor_tau, hh=h: hh.motor.send_mit(float(mp), float(mv), float(kpi), float(kdi), float(mt)),
+                op_name=f"send_mit({h.config.name})",
+                err_code=ArmErrorCode.ERR_TIMEOUT,
+            )
 
     def set_pos_vel_joint(self, index: int, q_target: float, vlim: float) -> None:
         self._check_index(index)

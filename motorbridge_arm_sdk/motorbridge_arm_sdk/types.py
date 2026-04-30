@@ -33,6 +33,8 @@ class JointConfig:
     def __post_init__(self):
         if self.direction == 0:
             raise ValueError(f"joint '{self.name}': direction cannot be 0")
+        if self.direction not in (1.0, -1.0):
+            raise ValueError(f"joint '{self.name}': direction must be 1.0 or -1.0, got {self.direction}")
         if self.limit_pos_min >= self.limit_pos_max:
             raise ValueError(f"joint '{self.name}': limit_pos_min ({self.limit_pos_min}) must be < limit_pos_max ({self.limit_pos_max})")
         if self.limit_vel < 0:
@@ -54,6 +56,17 @@ class ArmConfig:
     ee_frame: str = "tool0"
     gripper_joint: str | None = None
     shared_memory_name: str | None = None
+
+    def __post_init__(self):
+        if not self.joints:
+            raise ValueError("arm must have at least one joint")
+        if self.loop_dt_s <= 0:
+            raise ValueError(f"loop_dt_s must be positive, got {self.loop_dt_s}")
+        if self.default_home and len(self.default_home) != len(self.joints):
+            raise ValueError(
+                f"default_home length ({len(self.default_home)}) must match "
+                f"number of joints ({len(self.joints)})"
+            )
 
 
 @dataclass(slots=True)

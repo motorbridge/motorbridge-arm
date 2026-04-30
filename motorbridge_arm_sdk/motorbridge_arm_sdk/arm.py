@@ -541,14 +541,7 @@ class Arm:
         """
         q = self.get_joint_positions()
         base = self._kin.forward(q)
-        return Pose6D(
-            x=base.x + self._tool.x,
-            y=base.y + self._tool.y,
-            z=base.z + self._tool.z,
-            roll=base.roll + self._tool.roll,
-            pitch=base.pitch + self._tool.pitch,
-            yaw=base.yaw + self._tool.yaw,
-        )
+        return self._apply_tool_offset(base)
 
     def move_j(self, q_target: list[float], vlim: float = 1.0, profile: str | None = None) -> None:
         """Move all joints to target positions in joint space.
@@ -887,15 +880,7 @@ class Arm:
         """
         self._require_connected()
         q_now = self.get_joint_positions()
-        start = self._kin.forward(q_now)
-        start = Pose6D(
-            x=start.x + self._tool.x,
-            y=start.y + self._tool.y,
-            z=start.z + self._tool.z,
-            roll=start.roll + self._tool.roll,
-            pitch=start.pitch + self._tool.pitch,
-            yaw=start.yaw + self._tool.yaw,
-        )
+        start = self._apply_tool_offset(self._kin.forward(q_now))
         profile_name = profile or self._cfg.motion_profile
         dist = ((target.x - start.x) ** 2 + (target.y - start.y) ** 2 + (target.z - start.z) ** 2) ** 0.5
         steps = max(2, int(dist / max(step_m, 1e-4)) + 1)
@@ -1176,9 +1161,11 @@ class Arm:
     def clear_faults(self) -> None:
         """Clear fault conditions on all joints.
 
-        Sends a clear-fault command to every motor.  After clearing you
+        Sends a clear-fault command to every motor and resets the abort event
+        so that motion commands can be issued again.  After clearing you
         typically need to call :meth:`enable` to resume operation.
         """
+        self._abort_event.clear()
         self._session.clear_fault_all()
         self._recorder.add("clear_faults", {"ok": True})
 
@@ -1353,6 +1340,16 @@ class Arm:
         """Raise ArmError if the arm is in the DISCONNECTED state."""
         if self._runtime.state == ArmRunState.DISCONNECTED:
             raise ArmError(ArmErrorCode.ERR_STATE, "arm is not connected")
+
+    def _apply_tool_offset(self, pose: Pose6D) -> Pose6D:
+        return Pose6D(
+            x=pose.x + self._tool.x,
+            y=pose.y + self._tool.y,
+            z=pose.z + self._tool.z,
+            roll=pose.roll + self._tool.roll,
+            pitch=pose.pitch + self._tool.pitch,
+            yaw=pose.yaw + self._tool.yaw,
+        )
 
     def __enter__(self) -> "Arm":
         return self

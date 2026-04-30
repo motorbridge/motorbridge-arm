@@ -103,9 +103,11 @@ class Kinematics:
         qv = np.zeros(nq)
         n = min(nq, len(q))
         qv[:n] = np.array(q[:n], dtype=float)
-        self._pin.forwardKinematics(self._model, self._data, qv)
-        self._pin.updateFramePlacements(self._model, self._data)
-        oMf = self._data.oMf[self._frame_id]
+        # Use fresh data per call for thread safety, same pattern as inverse.
+        data = self._model.createData()
+        self._pin.forwardKinematics(self._model, data, qv)
+        self._pin.updateFramePlacements(self._model, data)
+        oMf = data.oMf[self._frame_id]
         t = oMf.translation
         R = oMf.rotation
         roll, pitch, yaw = _rot_to_rpy(R)
