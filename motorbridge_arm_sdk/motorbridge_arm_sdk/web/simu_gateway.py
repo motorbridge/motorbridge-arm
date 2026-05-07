@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import argparse
 import json
 import logging
 import time
@@ -14,6 +15,7 @@ logger = logging.getLogger(__name__)
 from ..sim import SimArm
 from ..types import Pose6D
 from .protocol_bus import ProtocolBus
+from .state_publishers import JsonlStatePublisher, MultiStatePublisher, NullStatePublisher, Ros2JsonStatePublisher
 
 _MAX_WAYPOINTS = 512
 _WAYPOINT_DWELL_S = 0.25
@@ -22,7 +24,13 @@ _WAYPOINT_NEAR_TOLERANCE_M = 0.015
 
 
 class SimuWsGateway:
-    def __init__(self, host: str = "127.0.0.1", port: int = 9011, path: str = "/ws") -> None:
+    def __init__(
+        self,
+        host: str = "127.0.0.1",
+        port: int = 9011,
+        path: str = "/ws",
+        state_publisher=None,
+    ) -> None:
         self.host = host
         self.port = port
         self.path = path
@@ -37,6 +45,7 @@ class SimuWsGateway:
         self._motion_task: asyncio.Task | None = None
         self._motion_stop = False
         self._motion_status: dict[str, Any] = {"running": False, "name": "idle"}
+        self._external_publisher = state_publisher or NullStatePublisher()
 
     async def start(self) -> None:
         try:
@@ -45,13 +54,14 @@ class SimuWsGateway:
             raise RuntimeError("websockets dependency missing; install with: pip install websockets") from exc
 
         async with serve(self._handler, self.host, self.port, ping_interval=20, ping_timeout=20):
-            self._state_task = asyncio.create_task(self._state_publisher())
+            self._state_task = asyncio.create_task(self._state_loop())
             logger.info("listening ws://%s:%d%s", self.host, self.port, self.path)
             try:
                 await asyncio.Future()
             finally:
                 if self._state_task:
                     self._state_task.cancel()
+                self._external_publisher.close()
 
     async def _handler(self, ws) -> None:
         self._clients.add(ws)
@@ -406,12 +416,14 @@ class SimuWsGateway:
             self._motion_status = {"running": False, "name": "error", "error": str(exc)}
             await self._broadcast_event("task", {"event": "error", "task": self._motion_status})
 
-    async def _state_publisher(self) -> None:
+    async def _state_loop(self) -> None:
         while True:
             await asyncio.sleep(0.05)
+            snapshot = self._snapshot_state()
+            self._publish_external("state", snapshot)
             if not self._clients:
                 continue
-            state_msg = {"type": "state", "data": self._snapshot_state()}
+            state_msg = {"type": "state", "data": snapshot}
             dead = []
             for ws in list(self._clients):
                 try:
@@ -427,6 +439,7 @@ class SimuWsGateway:
 
     async def _broadcast_event(self, event_type: str, data: dict[str, Any]) -> None:
         payload = {"type": event_type, "data": data, "ts": time.time()}
+        self._publish_external(event_type, data)
         dead = []
         for ws in list(self._clients):
             try:
@@ -436,9 +449,35 @@ class SimuWsGateway:
         for ws in dead:
             self._clients.discard(ws)
 
+    def _publish_external(self, event_type: str, data: dict[str, Any]) -> None:
+        event = {
+            "schema": "motorbridge.simu.v1",
+            "type": event_type,
+            "source": "simu_gateway",
+            "ts": time.time(),
+            "data": data,
+        }
+        self._bus.publish_tx("sim", event)
+        self._external_publisher.publish(event)
+
 
 def main() -> int:
-    gateway = SimuWsGateway()
+    parser = argparse.ArgumentParser(description="Run the MotorBridge /simu WebSocket gateway")
+    parser.add_argument("--host", default="127.0.0.1")
+    parser.add_argument("--port", type=int, default=9011)
+    parser.add_argument("--path", default="/ws")
+    parser.add_argument("--publish-jsonl", default="", help="Append state/events as JSONL for debugging or replay")
+    parser.add_argument("--publish-ros2", action="store_true", help="Publish state/events to a ROS2 std_msgs/String topic")
+    parser.add_argument("--ros2-topic", default="/motorbridge/simu/events")
+    args = parser.parse_args()
+
+    publisher = MultiStatePublisher()
+    if args.publish_jsonl:
+        publisher.add(JsonlStatePublisher(args.publish_jsonl))
+    if args.publish_ros2:
+        publisher.add(Ros2JsonStatePublisher(topic=args.ros2_topic))
+
+    gateway = SimuWsGateway(host=args.host, port=args.port, path=args.path, state_publisher=publisher)
     asyncio.run(gateway.start())
     return 0
 

@@ -1,11 +1,13 @@
 """Tests for the WebSocket gateway dispatch logic."""
 import asyncio
+import json
 from unittest.mock import MagicMock, patch
 
 import pytest
 
 from motorbridge_arm_sdk.types import Pose6D
 from motorbridge_arm_sdk.sim.simulator import SimPoseValidation
+from motorbridge_arm_sdk.web.state_publishers import JsonlStatePublisher
 
 
 def _run(coro):
@@ -228,3 +230,13 @@ def test_snapshot_state():
     assert "motion" in snap
     assert "ts" in snap
     assert len(snap["q"]) == 6
+
+
+def test_jsonl_state_publisher(tmp_path):
+    path = tmp_path / "events.jsonl"
+    pub = JsonlStatePublisher(path)
+    pub.publish({"schema": "motorbridge.simu.v1", "type": "state", "data": {"ok": True}})
+    pub.close()
+    rows = path.read_text(encoding="utf-8").splitlines()
+    assert len(rows) == 1
+    assert json.loads(rows[0])["type"] == "state"

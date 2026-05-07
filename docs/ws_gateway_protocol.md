@@ -4,6 +4,31 @@ Gateway entry:
 - `scripts/run_simu_ws_gateway.py`
 - default endpoint: `ws://127.0.0.1:9011/ws`
 
+Common startup:
+```bash
+uv run python scripts/run_simu_ws_gateway.py --host 127.0.0.1 --port 9011
+```
+
+Publish the same simulation state/events to a local JSONL stream:
+```bash
+uv run python scripts/run_simu_ws_gateway.py \
+  --host 127.0.0.1 --port 9011 \
+  --publish-jsonl /tmp/motorbridge_simu_events.jsonl
+```
+
+Publish the same state/events to ROS2 as `std_msgs/String` JSON:
+```bash
+uv run python scripts/run_simu_ws_gateway.py \
+  --host 127.0.0.1 --port 9011 \
+  --publish-ros2 \
+  --ros2-topic /motorbridge/simu/events
+```
+
+ROS2 publishing requires `rclpy` and `std_msgs` to be available in the active
+ROS2 environment. The JSON schema is intentionally the same as the WebSocket
+event schema so simulation consumers and future real-arm consumers can share
+one parser.
+
 ## Built-in operations
 - `ping`
 - `state`
@@ -14,6 +39,7 @@ Gateway entry:
 - `waypoint_remove`
 - `waypoint_clear`
 - `waypoint_list`
+- `waypoint_validate`
 - `sim_run_waypoints`
 - `sim_run_sequence`
 - `sim_stop`
@@ -29,6 +55,28 @@ Gateway entry:
   - `pose`
   - `waypoints` (`id -> {label, x, y, z, roll, pitch, yaw}`)
   - `motion` (`running/name/from_id/to_id`)
+
+## External publish schema
+When `--publish-jsonl` or `--publish-ros2` is enabled, every state/event is
+published as:
+
+```json
+{
+  "schema": "motorbridge.simu.v1",
+  "type": "state",
+  "source": "simu_gateway",
+  "ts": 0.0,
+  "data": {}
+}
+```
+
+Event types currently include:
+- `state`
+- `waypoint`
+- `task`
+
+This gives downstream systems one synchronized stream that can be consumed by
+local replay tools, ROS2 nodes, or a future real-arm bridge.
 
 ## Dual-buffer bus design
 The gateway includes `ProtocolBus` with two ring buffers:
