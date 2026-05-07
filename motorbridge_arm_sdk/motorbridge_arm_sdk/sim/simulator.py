@@ -26,6 +26,16 @@ class SimTrajectory:
     duration_s: float
 
 
+@dataclass(slots=True)
+class SimPoseValidation:
+    requested: Pose6D
+    solved_pose: Pose6D
+    q: list[float]
+    error_m: float
+    reachable: bool
+    iterations: int
+
+
 class SimArm:
     """Model-only arm simulator without motor hardware.
 
@@ -69,7 +79,26 @@ class SimArm:
         self.set_joint_positions(q_target)
 
     def solve_ik(self, pose: Pose6D) -> list[float]:
-        return self._kin.inverse(pose, self._q)
+        return self._kin.inverse_position(pose, self._q)
+
+    def validate_pose(self, pose: Pose6D, tolerance_m: float = 0.003) -> SimPoseValidation:
+        """Check whether a Cartesian pose is reachable without moving the simulator."""
+        result = self._kin.inverse_position_result(pose, self._q)
+        q = result.q if result.q else self.solve_ik(pose)
+        solved_pose = self._kin.forward(q)
+        error_m = (
+            (solved_pose.x - pose.x) ** 2
+            + (solved_pose.y - pose.y) ** 2
+            + (solved_pose.z - pose.z) ** 2
+        ) ** 0.5
+        return SimPoseValidation(
+            requested=pose,
+            solved_pose=solved_pose,
+            q=list(q),
+            error_m=float(error_m),
+            reachable=bool(error_m <= tolerance_m),
+            iterations=int(getattr(result, "iterations", 0) or 0),
+        )
 
     def plan_l(
         self,

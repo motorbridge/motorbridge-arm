@@ -5,6 +5,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from motorbridge_arm_sdk.types import Pose6D
+from motorbridge_arm_sdk.sim.simulator import SimPoseValidation
 
 
 def _run(coro):
@@ -17,6 +18,14 @@ def _make_gateway():
         mock_sim = MagicMock()
         mock_sim.get_joint_positions.return_value = [0.0] * 6
         mock_sim.get_pose.return_value = Pose6D(x=0.3, y=0.0, z=0.4, roll=0.0, pitch=0.0, yaw=0.0)
+        mock_sim.validate_pose.return_value = SimPoseValidation(
+            requested=Pose6D(x=0.3, y=0.1, z=0.4, roll=0.0, pitch=0.0, yaw=0.0),
+            solved_pose=Pose6D(x=0.301, y=0.1, z=0.4, roll=0.0, pitch=0.0, yaw=0.0),
+            q=[0.0] * 6,
+            error_m=0.001,
+            reachable=True,
+            iterations=12,
+        )
         MockSim.return_value = mock_sim
 
         from motorbridge_arm_sdk.web.simu_gateway import SimuWsGateway
@@ -151,6 +160,22 @@ def test_dispatch_waypoint_list():
     result = _run(gw._dispatch({"op": "waypoint_list", "req_id": 13}))
     assert result["ok"] is True
     assert "waypoints" in result["data"]
+
+
+def test_dispatch_waypoint_validate():
+    gw, mock_sim = _make_gateway()
+    result = _run(
+        gw._dispatch({
+            "op": "waypoint_validate",
+            "req_id": 14,
+            "pose": {"x": 0.3, "y": 0.1, "z": 0.4, "roll": 0, "pitch": 0, "yaw": 0},
+        })
+    )
+    assert result["ok"] is True
+    assert result["data"]["reachable"] is True
+    assert result["data"]["grade"] == "ok"
+    assert result["data"]["error_mm"] == pytest.approx(1.0)
+    mock_sim.validate_pose.assert_called_once()
 
 
 def test_dispatch_unknown_op():

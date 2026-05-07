@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from ..types import Pose6D
-from .inverse_kinematics import IKParams, IKResult, solve_ik_advanced
+from .inverse_kinematics import IKParams, IKResult, clamp_config_safe, solve_ik_advanced
 
 logger = logging.getLogger(__name__)
 
@@ -126,6 +126,32 @@ class Kinematics:
                 return r.q
         return self._inverse_simple(target, q_seed)
 
+    def inverse_position(self, target: Pose6D, q_seed: list[float]) -> list[float]:
+        """Solve IK with XYZ position as the primary task.
+
+        This is intended for interactive point planning where users choose a
+        Cartesian point in the viewport.  A requested RPY may be impossible for
+        that point, so position-only IK avoids sacrificing XYZ accuracy to chase
+        an unreachable orientation.
+        """
+        if not q_seed:
+            q_seed = [0.0] * 6
+        if self._pin is not None:
+            r = self.inverse_position_result(target, q_seed)
+            if r.q and len(r.q) >= len(q_seed):
+                return r.q
+        return self._inverse_simple(target, q_seed)
+
+    def inverse_position_result(self, target: Pose6D, q_seed: list[float]) -> IKResult:
+        if not q_seed:
+            q_seed = [0.0] * 6
+        if self._pin is not None:
+            q = self._inverse_pinocchio_position_result(target, q_seed)
+            if q is not None:
+                return q
+        q_fb = self._inverse_simple(target, q_seed)
+        return IKResult(q=q_fb, success=False, error=float("inf"), iterations=0)
+
     def inverse_result(self, target: Pose6D, q_seed: list[float]) -> IKResult:
         if not q_seed:
             q_seed = [0.0] * 6
@@ -178,3 +204,94 @@ class Kinematics:
             params=IKParams(),
         )
         return res
+
+    def _inverse_pinocchio_position_result(self, target: Pose6D, q_seed: list[float]) -> IKResult | None:
+        try:
+            import numpy as np
+        except Exception:
+            return None
+
+        pin = self._pin
+        model = self._model
+        data = model.createData()
+        target_xyz = np.array([target.x, target.y, target.z], dtype=float)
+        nq = model.nq
+        q0 = np.zeros(nq)
+        n = min(nq, len(q_seed))
+        q0[:n] = np.array(q_seed[:n], dtype=float)
+
+        try:
+            ref_frame = pin.ReferenceFrame.LOCAL_WORLD_ALIGNED
+        except AttributeError:  # pragma: no cover - older Pinocchio fallback
+            ref_frame = pin.ReferenceFrame.WORLD
+
+        def _clamp(q):
+            return np.array(clamp_config_safe(model, q), dtype=float)
+
+        def _pos_error(q):
+            pin.forwardKinematics(model, data, q)
+            pin.updateFramePlacements(model, data)
+            cur = data.oMf[self._frame_id].translation
+            err = target_xyz - cur
+            return err, float(np.linalg.norm(err))
+
+        def _solve_once(q_init):
+            q = _clamp(q_init)
+            best_q = q.copy()
+            best_err = float("inf")
+            max_iter = 700
+            tolerance = 2e-4
+            damping = 1e-5
+            step_size = 0.85
+            for it in range(max_iter):
+                err, err_norm = _pos_error(q)
+                if err_norm < best_err:
+                    best_err = err_norm
+                    best_q = q.copy()
+                if err_norm < tolerance:
+                    return IKResult(q=[float(v) for v in q], success=True, error=err_norm, iterations=it)
+
+                pin.computeJointJacobians(model, data, q)
+                jac = pin.getFrameJacobian(model, data, self._frame_id, ref_frame)
+                j_pos = jac[:3, :]
+                jjt = j_pos @ j_pos.T
+                jjt[np.diag_indices_from(jjt)] += damping * max(1.0, err_norm * 10.0)
+                dq = step_size * j_pos.T @ np.linalg.solve(jjt, err)
+
+                accepted = False
+                alpha = 1.0
+                for _ in range(6):
+                    q_new = _clamp(pin.integrate(model, q, alpha * dq))
+                    _, next_err = _pos_error(q_new)
+                    if next_err < err_norm:
+                        q = q_new
+                        accepted = True
+                        break
+                    alpha *= 0.5
+                if not accepted:
+                    q = _clamp(pin.integrate(model, q, 0.05 * dq))
+            return IKResult(q=[float(v) for v in best_q], success=False, error=best_err, iterations=max_iter)
+
+        best = _solve_once(q0)
+        if best.success or best.error < 1e-3:
+            return best
+
+        # A few deterministic warm starts help escape singular straight-home
+        # poses without making the interactive WebSocket loop feel stuck.
+        seeds = [
+            [0.0, -0.35, 0.7, 0.0, 0.35, 0.0, 0.0, 0.0],
+            [0.5, -0.45, 0.85, 0.0, 0.4, 0.0, 0.0, 0.0],
+            [-0.5, -0.45, 0.85, 0.0, 0.4, 0.0, 0.0, 0.0],
+            [1.0, -0.6, 1.0, 0.2, 0.5, 0.0, 0.0, 0.0],
+            [-1.0, -0.6, 1.0, -0.2, 0.5, 0.0, 0.0, 0.0],
+        ]
+        for seed in seeds:
+            q_seeded = np.zeros(nq)
+            m = min(nq, len(seed))
+            q_seeded[:m] = np.array(seed[:m], dtype=float)
+            r = _solve_once(q_seeded)
+            if r.error < best.error:
+                best = r
+            if best.success or best.error < 1e-3:
+                break
+        return best
