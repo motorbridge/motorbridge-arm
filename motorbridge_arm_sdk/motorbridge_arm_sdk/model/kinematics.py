@@ -118,7 +118,11 @@ class Kinematics:
             q_seed = [0.0] * 6
         if self._pin is not None:
             r = self.inverse_result(target, q_seed)
-            if r.success:
+            if r.q and len(r.q) >= len(q_seed):
+                # Even when the full 6D pose tolerance is not met, the
+                # Pinocchio solve usually contains the best reachable
+                # configuration.  Falling back to the coarse simple solver
+                # makes reachable Cartesian targets jump to the wrong place.
                 return r.q
         return self._inverse_simple(target, q_seed)
 

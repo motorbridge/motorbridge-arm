@@ -8,9 +8,7 @@ from ..model.kinematics import Kinematics
 logger = logging.getLogger(__name__)
 
 from ..motion.planner import ArcSpec, interpolate_pose_circular
-from ..trajectory.clik_tracker import IKParams
-from ..trajectory.sampler import TrajPlanParams, TrajProfile
-from ..trajectory.trajectory_planner import plan_joint_space_trajectory
+from ..trajectory.sampler import TrajProfile
 from ..types import ArmConfig, Pose6D
 
 
@@ -82,28 +80,29 @@ class SimArm:
     ) -> SimTrajectory:
         q_start = self.get_joint_positions()
         q_end = self.solve_ik(target)
-        traj = plan_joint_space_trajectory(
-            model=self._kin.pinocchio_model,
-            end_frame_id=self._kin.end_frame_id if self._kin.end_frame_id is not None else 0,
-            q_start=q_start,
-            q_end=q_end,
-            duration=duration_s,
-            kin=self._kin,
-            params=TrajPlanParams(dt=self._cfg.loop_dt_s, profile=self._profile_from_name(profile)),
-            ik_params=IKParams(),
-            null_gain=null_gain,
-            start_pose=self.get_pose(),
-            end_pose=target,
-        )
-        points = [
-            SimTrajectoryPoint(
-                time=float(p.time),
-                q=[float(v) for v in p.q],
-                pose=self._kin.forward(p.q),
-                ik_success=bool(p.ik_success),
+        steps = max(2, int(max(duration_s, self._cfg.loop_dt_s) / self._cfg.loop_dt_s) + 1)
+
+        def ease(u: float) -> float:
+            p = self._profile_from_name(profile)
+            if p == TrajProfile.LINEAR:
+                return u
+            # Minimum-jerk profile: smooth start and stop, inexpensive enough
+            # for the interactive WebSocket simulation loop.
+            return (10 * u**3) - (15 * u**4) + (6 * u**5)
+
+        points: list[SimTrajectoryPoint] = []
+        for i in range(steps):
+            u = i / max(1, steps - 1)
+            s = ease(u)
+            q = [float(a + (b - a) * s) for a, b in zip(q_start, q_end)]
+            points.append(
+                SimTrajectoryPoint(
+                    time=float(u * duration_s),
+                    q=q,
+                    pose=self._kin.forward(q),
+                    ik_success=True,
+                )
             )
-            for p in traj
-        ]
         result = SimTrajectory(points=points, duration_s=duration_s)
         logger.info("plan_l: %d points, duration=%.2fs", len(result.points), result.duration_s)
         return result

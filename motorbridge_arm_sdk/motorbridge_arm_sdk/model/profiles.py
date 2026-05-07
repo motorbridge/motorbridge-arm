@@ -30,6 +30,29 @@ def _resolve_urdf_path() -> str:
     return str(fallback)
 
 
+def _resolve_arm02_urdf_path() -> str:
+    """Resolve the arm02 URDF used by motorbridge-studio's /simu page.
+
+    The studio repository owns the visual arm02 assets today.  Keep the
+    resolver tolerant so the SDK still imports when only motorbridge-arm is
+    installed.
+    """
+    repo_root = Path(__file__).resolve().parents[3]
+    sibling = (
+        repo_root.parent
+        / "motorbridge-studio"
+        / "public"
+        / "resources"
+        / "arm02"
+        / "reBot_B601_DM_with_gripper"
+        / "urdf"
+        / "reBot_B601_DM_with_gripper.urdf"
+    )
+    if sibling.exists():
+        return str(sibling)
+    return _resolve_urdf_path()
+
+
 # Example product profile for a 6-DOF robstride arm kit.
 def rebot_arm_robstride(channel: str = "can0") -> ArmConfig:
     joints = [
@@ -46,6 +69,51 @@ def rebot_arm_robstride(channel: str = "can0") -> ArmConfig:
         loop_dt_s=0.02,
         urdf_path=urdf_path,
         ee_frame="tool0",
+    )
+
+
+def rebot_arm02_dm_with_gripper(channel: str = "can0") -> ArmConfig:
+    """Profile matching motorbridge-studio's arm02 simulation asset.
+
+    The first six joints are revolute arm joints.  The final two are the
+    gripper prismatic joints from the arm02 URDF.
+    """
+    joints = [
+        JointConfig(name=f"joint{i}", vendor="damiao", model="dm", esc_id=i, feedback_id=0xFD)
+        for i in range(1, 7)
+    ]
+    joints.extend(
+        [
+            JointConfig(
+                name="gripper_joint1",
+                vendor="damiao",
+                model="dm-gripper",
+                esc_id=7,
+                feedback_id=0xFD,
+                limit_pos_min=0.0,
+                limit_pos_max=0.0715,
+            ),
+            JointConfig(
+                name="gripper_joint2",
+                vendor="damiao",
+                model="dm-gripper",
+                esc_id=7,
+                feedback_id=0xFD,
+                limit_pos_min=0.0,
+                limit_pos_max=0.0715,
+            ),
+        ]
+    )
+    return ArmConfig(
+        name="rebot-arm02-dm-with-gripper",
+        model="rebot-arm02-dm-with-gripper",
+        channel=channel,
+        joints=joints,
+        default_home=[0.0] * len(joints),
+        loop_dt_s=0.02,
+        urdf_path=_resolve_arm02_urdf_path(),
+        ee_frame="gripper_link",
+        gripper_joint="gripper_joint1",
     )
 
 

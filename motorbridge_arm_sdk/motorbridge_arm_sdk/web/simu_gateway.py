@@ -7,7 +7,7 @@ import time
 from dataclasses import asdict
 from typing import Any
 
-from ..model.profiles import rebot_arm_robstride
+from ..model.profiles import rebot_arm02_dm_with_gripper
 
 logger = logging.getLogger(__name__)
 
@@ -24,7 +24,8 @@ class SimuWsGateway:
         self.port = port
         self.path = path
         self._clients: set[Any] = set()
-        self._sim = SimArm(rebot_arm_robstride())
+        self._cfg = rebot_arm02_dm_with_gripper()
+        self._sim = SimArm(self._cfg)
         # Force simulator startup posture to all-zero for deterministic web/CLI initial state.
         self._sim.set_joint_positions([0.0 for _ in self._sim.get_joint_positions()])
         self._state_task: asyncio.Task | None = None
@@ -80,13 +81,23 @@ class SimuWsGateway:
         if op == "sim_set_joint_targets":
             targets = req.get("targets") or {}
             q = self._sim.get_joint_positions()
+            joint_names = [j.name for j in self._cfg.joints]
             for i in range(len(q)):
-                key = f"joint{i+1}"
+                key = joint_names[i] if i < len(joint_names) else f"joint{i+1}"
                 if key in targets:
                     try:
                         q[i] = float(targets[key])
                     except Exception:
                         pass
+            # Browser UI compatibility: joint7 is the single gripper slider.
+            if "joint7" in targets:
+                try:
+                    opening = float(targets["joint7"])
+                    for name in ("gripper_joint1", "gripper_joint2"):
+                        if name in joint_names:
+                            q[joint_names.index(name)] = opening
+                except Exception:
+                    pass
             self._sim.set_joint_positions(q)
             self._bus.publish_tx("sim", {"event": "sim_set_joint_targets", "targets": targets})
             return {"ok": True, "req_id": req_id, "op": op, "data": self._snapshot_state()}
@@ -230,9 +241,17 @@ class SimuWsGateway:
     def _snapshot_state(self) -> dict[str, Any]:
         q = self._sim.get_joint_positions()
         p = self._sim.get_pose()
+        joint_names = [j.name for j in self._cfg.joints]
+        joint_targets = {
+            (joint_names[i] if i < len(joint_names) else f"joint{i+1}"): q[i]
+            for i in range(len(q))
+        }
+        # Keep a compact alias for the current /simu UI gripper slider.
+        if "gripper_joint1" in joint_targets:
+            joint_targets["joint7"] = joint_targets["gripper_joint1"]
         return {
             "q": q,
-            "joint_targets": {f"joint{i+1}": q[i] for i in range(len(q))},
+            "joint_targets": joint_targets,
             "pose": asdict(p),
             "waypoints": self._waypoints,
             "motion": self._motion_status,

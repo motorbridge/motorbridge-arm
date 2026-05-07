@@ -98,6 +98,15 @@ def solve_ik_advanced(pin, model, data, frame_id: int, target_se3, q_seed: list[
     best = _solve_once(q0)
     if best.success:
         return best
+    # For interactive simulation, a near solution is more useful than spending
+    # seconds on random retries while the WebSocket loop appears frozen.
+    if best.q:
+        q_best = np.array(best.q, dtype=float)
+        pin.forwardKinematics(model, data, q_best)
+        pin.updateFramePlacements(model, data)
+        pos_err = float(np.linalg.norm(data.oMf[frame_id].translation - target_se3.translation))
+        if pos_err < 2.5e-2:
+            return best
 
     lo = [float(x) if math.isfinite(float(x)) else -math.pi for x in model.lowerPositionLimit]
     hi = [float(x) if math.isfinite(float(x)) else math.pi for x in model.upperPositionLimit]
