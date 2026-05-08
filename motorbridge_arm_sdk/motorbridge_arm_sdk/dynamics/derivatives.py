@@ -11,7 +11,7 @@ except ImportError:
 
 from .inertia import _as_q, _as_v, _check_q_shape, _check_v_shape
 from .inverse_dynamics import _as_a, _check_a_shape
-from .robot_model import DynamicsRobotModel
+from .robot_model import DynamicsRobotModel, _fresh_data
 
 
 def compute_rnea_derivatives(drm: DynamicsRobotModel, q=None, v=None, a=None):
@@ -57,11 +57,12 @@ def compute_rnea_derivatives(drm: DynamicsRobotModel, q=None, v=None, a=None):
     _check_v_shape(drm, vv, "compute_rnea_derivatives")
     _check_a_shape(drm, aa, "compute_rnea_derivatives")
 
-    drm.pin.computeRNEADerivatives(drm.model, drm.data, qv, vv, aa)
+    data = _fresh_data(drm)
+    drm.pin.computeRNEADerivatives(drm.model, data, qv, vv, aa)
     return (
-        np.asarray(drm.data.dtau_dq, dtype=float).copy(),
-        np.asarray(drm.data.dtau_dv, dtype=float).copy(),
-        np.asarray(drm.data.M, dtype=float).copy(),
+        np.asarray(data.dtau_dq, dtype=float).copy(),
+        np.asarray(data.dtau_dv, dtype=float).copy(),
+        np.asarray(data.M, dtype=float).copy(),
     )
 
 
@@ -102,8 +103,9 @@ def compute_coriolis_derivatives(drm: DynamicsRobotModel, q=None, v=None):
 
     _check_q_shape(drm, qv, "compute_coriolis_derivatives")
     _check_v_shape(drm, vv, "compute_coriolis_derivatives")
-    drm.pin.computeRNEADerivatives(drm.model, drm.data, qv, vv, np.zeros(drm.nv))
-    return np.asarray(drm.data.dtau_dq, dtype=float).copy(), np.asarray(drm.data.dtau_dv, dtype=float).copy()
+    data = _fresh_data(drm)
+    drm.pin.computeRNEADerivatives(drm.model, data, qv, vv, np.zeros(drm.nv))
+    return np.asarray(data.dtau_dq, dtype=float).copy(), np.asarray(data.dtau_dv, dtype=float).copy()
 
 
 def compute_generalized_gravity_derivatives(drm: DynamicsRobotModel, q=None):
@@ -134,8 +136,9 @@ def compute_generalized_gravity_derivatives(drm: DynamicsRobotModel, q=None):
         from ._fallback import _zeros_2d
         return _zeros_2d(n)
     _check_q_shape(drm, qv, "compute_generalized_gravity_derivatives")
-    drm.pin.computeRNEADerivatives(drm.model, drm.data, qv, np.zeros(drm.nv), np.zeros(drm.nv))
-    return np.asarray(drm.data.dtau_dq, dtype=float).copy()
+    data = _fresh_data(drm)
+    drm.pin.computeRNEADerivatives(drm.model, data, qv, np.zeros(drm.nv), np.zeros(drm.nv))
+    return np.asarray(data.dtau_dq, dtype=float).copy()
 
 
 def compute_mass_matrix_derivatives(drm: DynamicsRobotModel, q=None):
@@ -172,11 +175,12 @@ def compute_mass_matrix_derivatives(drm: DynamicsRobotModel, q=None):
 
     # Try analytical method first (more accurate).
     try:
-        drm.pin.computeAllTerms(drm.model, drm.data, qv, np.zeros(drm.nv))
-        drm.pin.computeMassMatrixDerivatives(drm.model, drm.data, qv)
+        data = _fresh_data(drm)
+        drm.pin.computeAllTerms(drm.model, data, qv, np.zeros(drm.nv))
+        drm.pin.computeMassMatrixDerivatives(drm.model, data, qv)
         dMdq = np.zeros((drm.nq, drm.nv, drm.nv), dtype=float)
         for j in range(drm.nq):
-            dMdq[j] = np.asarray(drm.data.dMdq[j], dtype=float).copy()
+            dMdq[j] = np.asarray(data.dMdq[j], dtype=float).copy()
         return dMdq
     except (AttributeError, TypeError):
         pass
@@ -189,10 +193,12 @@ def compute_mass_matrix_derivatives(drm: DynamicsRobotModel, q=None):
         qm = qv.copy()
         qp[j] += eps
         qm[j] -= eps
-        drm.pin.crba(drm.model, drm.data, qp)
-        Mp = np.asarray(drm.data.M, dtype=float).copy()
-        drm.pin.crba(drm.model, drm.data, qm)
-        Mm = np.asarray(drm.data.M, dtype=float).copy()
+        fd1 = _fresh_data(drm)
+        drm.pin.crba(drm.model, fd1, qp)
+        Mp = np.asarray(fd1.M, dtype=float).copy()
+        fd2 = _fresh_data(drm)
+        drm.pin.crba(drm.model, fd2, qm)
+        Mm = np.asarray(fd2.M, dtype=float).copy()
         dMdq[j] = (Mp - Mm) / (2.0 * eps)
     return dMdq
 

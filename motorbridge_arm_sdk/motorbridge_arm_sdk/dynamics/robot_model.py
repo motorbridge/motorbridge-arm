@@ -123,6 +123,18 @@ def create_data(drm: DynamicsRobotModel):
     return drm.model.createData()
 
 
+def _fresh_data(drm: DynamicsRobotModel):
+    """Return a fresh per-call Data object for thread-safe dynamics.
+
+    Returns ``drm.data`` only if Pinocchio is unavailable (the None
+    value is fine for fallback paths).  Otherwise allocates a new
+    ``Data`` so that concurrent calls never corrupt each other.
+    """
+    if not drm.has_pinocchio:
+        return drm.data
+    return drm.model.createData()
+
+
 def neutral_configuration(drm: DynamicsRobotModel):
     """Return the neutral (zero) configuration of the robot. / 返回机器人的零位配置。
 

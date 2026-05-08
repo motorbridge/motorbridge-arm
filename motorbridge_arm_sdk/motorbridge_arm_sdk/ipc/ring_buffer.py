@@ -425,6 +425,11 @@ class SharedRingBuffer:
                 val = struct.unpack_from("<d", buf, data_off + i * 8)[0]
                 torques.append(val)
 
+            # Re-verify tick after reading to detect torn writes.
+            slot_tick_after = struct.unpack_from(_SLOT_HEADER_FMT, buf, slot_offset)[0]
+            if slot_tick_after != target_tick:
+                break
+
             results.append(
                 {
                     "tick": target_tick,

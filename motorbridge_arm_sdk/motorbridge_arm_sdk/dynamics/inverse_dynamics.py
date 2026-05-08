@@ -10,7 +10,7 @@ except ImportError:
     np = None
 
 from .inertia import _as_q, _as_v, _check_q_shape, _check_v_shape
-from .robot_model import DynamicsRobotModel
+from .robot_model import DynamicsRobotModel, _fresh_data
 
 
 def _as_a(drm: DynamicsRobotModel, a) -> np.ndarray:
@@ -71,7 +71,8 @@ def compute_inverse_dynamics(drm: DynamicsRobotModel, q=None, v=None, a=None, fe
 
     if fext is None:
         fext = [drm.pin.Force.Zero() for _ in range(drm.model.njoints)]
-    tau = drm.pin.rnea(drm.model, drm.data, qv, vv, aa, fext)
+    data = _fresh_data(drm)
+    tau = drm.pin.rnea(drm.model, data, qv, vv, aa, fext)
     return np.asarray(tau, dtype=float)
 
 
@@ -101,8 +102,9 @@ def compute_generalized_gravity(drm: DynamicsRobotModel, q=None) -> np.ndarray:
         from ._fallback import _zeros_1d
         return _zeros_1d(int(len(qv)))
     _check_q_shape(drm, qv, "compute_generalized_gravity")
-    drm.pin.computeGeneralizedGravity(drm.model, drm.data, qv)
-    return drm.data.g.copy()
+    data = _fresh_data(drm)
+    drm.pin.computeGeneralizedGravity(drm.model, data, qv)
+    return data.g.copy()
 
 
 def compute_static_torque(drm: DynamicsRobotModel, q=None, fext=None) -> np.ndarray:
@@ -136,8 +138,9 @@ def compute_static_torque(drm: DynamicsRobotModel, q=None, fext=None) -> np.ndar
     _check_q_shape(drm, qv, "compute_static_torque")
     if fext is None:
         fext = [drm.pin.Force.Zero() for _ in range(drm.model.njoints)]
-    drm.pin.computeStaticTorque(drm.model, drm.data, qv, fext)
-    return drm.data.tau.copy()
+    data = _fresh_data(drm)
+    drm.pin.computeStaticTorque(drm.model, data, qv, fext)
+    return data.tau.copy()
 
 
 # Backward-compatible alias

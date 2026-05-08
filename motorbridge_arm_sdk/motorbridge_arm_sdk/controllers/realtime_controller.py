@@ -190,8 +190,7 @@ class RealtimeController:
         qd_d = wp.vel if wp.vel else [0.0] * self._dof
 
         try:
-            q = self._arm.get_joint_positions()
-            qd = self._arm.get_joint_velocities()
+            q, qd, _ = self._arm.get_state_vectors()
         except Exception:
             return
 

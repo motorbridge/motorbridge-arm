@@ -10,7 +10,7 @@ except ImportError:
     np = None
 
 from .inertia import _as_q, _as_v, _check_q_shape, _check_v_shape
-from .robot_model import DynamicsRobotModel
+from .robot_model import DynamicsRobotModel, _fresh_data
 
 
 def _as_tau(drm: DynamicsRobotModel, tau) -> np.ndarray:
@@ -68,7 +68,8 @@ def compute_forward_dynamics(drm: DynamicsRobotModel, q=None, v=None, tau=None) 
     _check_v_shape(drm, vv, "compute_forward_dynamics")
     _check_tau_shape(drm, tv, "compute_forward_dynamics")
 
-    ddq = drm.pin.aba(drm.model, drm.data, qv, vv, tv)
+    data = _fresh_data(drm)
+    ddq = drm.pin.aba(drm.model, data, qv, vv, tv)
     return np.asarray(ddq, dtype=float)
 
 
@@ -111,10 +112,11 @@ def forward_dynamics_from_nle(drm: DynamicsRobotModel, q=None, v=None, tau=None)
     _check_v_shape(drm, vv, "forward_dynamics_from_nle")
     _check_tau_shape(drm, tv, "forward_dynamics_from_nle")
 
-    drm.pin.computeAllTerms(drm.model, drm.data, qv, vv)
-    M = np.asarray(drm.data.M, dtype=float)
+    data = _fresh_data(drm)
+    drm.pin.computeAllTerms(drm.model, data, qv, vv)
+    M = np.asarray(data.M, dtype=float)
     M = 0.5 * (M + M.T)
-    return np.linalg.solve(M, tv - np.asarray(drm.data.nle, dtype=float))
+    return np.linalg.solve(M, tv - np.asarray(data.nle, dtype=float))
 
 
 # Backward-compatible alias

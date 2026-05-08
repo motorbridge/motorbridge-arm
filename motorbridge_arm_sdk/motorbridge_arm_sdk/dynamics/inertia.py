@@ -11,7 +11,7 @@ try:
 except ImportError:
     np = None
 
-from .robot_model import DynamicsRobotModel, neutral_configuration
+from .robot_model import DynamicsRobotModel, neutral_configuration, _fresh_data
 
 
 def _as_q(drm: DynamicsRobotModel, q) -> np.ndarray:
@@ -73,8 +73,9 @@ def compute_mass_matrix(drm: DynamicsRobotModel, q=None) -> np.ndarray:
         from ._fallback import _eye_2d
         return _eye_2d(n)
     _check_q_shape(drm, qv, "compute_mass_matrix")
-    drm.pin.crba(drm.model, drm.data, qv)
-    return np.asarray(drm.data.M, dtype=float).copy()
+    data = _fresh_data(drm)
+    drm.pin.crba(drm.model, data, qv)
+    return np.asarray(data.M, dtype=float).copy()
 
 
 def compute_coriolis_matrix(drm: DynamicsRobotModel, q=None, v=None) -> np.ndarray:
@@ -108,8 +109,9 @@ def compute_coriolis_matrix(drm: DynamicsRobotModel, q=None, v=None) -> np.ndarr
         return _zeros_2d(n)
     _check_q_shape(drm, qv, "compute_coriolis_matrix")
     _check_v_shape(drm, vv, "compute_coriolis_matrix")
-    drm.pin.computeCoriolisMatrix(drm.model, drm.data, qv, vv)
-    return np.asarray(drm.data.C, dtype=float).copy()
+    data = _fresh_data(drm)
+    drm.pin.computeCoriolisMatrix(drm.model, data, qv, vv)
+    return np.asarray(data.C, dtype=float).copy()
 
 
 def compute_gravity_vector(drm: DynamicsRobotModel, q=None) -> np.ndarray:
@@ -137,8 +139,9 @@ def compute_gravity_vector(drm: DynamicsRobotModel, q=None) -> np.ndarray:
         from ._fallback import _zeros_1d
         return _zeros_1d(int(len(qv)))
     _check_q_shape(drm, qv, "compute_gravity_vector")
-    drm.pin.computeGeneralizedGravity(drm.model, drm.data, qv)
-    return np.asarray(drm.data.g, dtype=float).copy()
+    data = _fresh_data(drm)
+    drm.pin.computeGeneralizedGravity(drm.model, data, qv)
+    return np.asarray(data.g, dtype=float).copy()
 
 
 def compute_nle(drm: DynamicsRobotModel, q=None, v=None) -> np.ndarray:
@@ -172,8 +175,9 @@ def compute_nle(drm: DynamicsRobotModel, q=None, v=None) -> np.ndarray:
         return _zeros_1d(int(len(qv) or len(vv)))
     _check_q_shape(drm, qv, "compute_nle")
     _check_v_shape(drm, vv, "compute_nle")
-    drm.pin.nonLinearEffects(drm.model, drm.data, qv, vv)
-    return np.asarray(drm.data.nle, dtype=float).copy()
+    data = _fresh_data(drm)
+    drm.pin.nonLinearEffects(drm.model, data, qv, vv)
+    return np.asarray(data.nle, dtype=float).copy()
 
 
 def compute_all_terms(drm: DynamicsRobotModel, q=None, v=None) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
@@ -211,11 +215,12 @@ def compute_all_terms(drm: DynamicsRobotModel, q=None, v=None) -> tuple[np.ndarr
         return _eye_2d(n), _zeros_2d(n), _zeros_1d(n)
     _check_q_shape(drm, qv, "compute_all_terms")
     _check_v_shape(drm, vv, "compute_all_terms")
-    drm.pin.computeAllTerms(drm.model, drm.data, qv, vv)
+    data = _fresh_data(drm)
+    drm.pin.computeAllTerms(drm.model, data, qv, vv)
     return (
-        np.asarray(drm.data.M, dtype=float).copy(),
-        np.asarray(drm.data.C, dtype=float).copy(),
-        np.asarray(drm.data.g, dtype=float).copy(),
+        np.asarray(data.M, dtype=float).copy(),
+        np.asarray(data.C, dtype=float).copy(),
+        np.asarray(data.g, dtype=float).copy(),
     )
 
 

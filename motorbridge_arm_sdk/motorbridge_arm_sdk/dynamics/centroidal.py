@@ -10,7 +10,7 @@ except ImportError:
     np = None
 
 from .inertia import _as_q, _as_v, _check_q_shape, _check_v_shape
-from .robot_model import DynamicsRobotModel
+from .robot_model import DynamicsRobotModel, _fresh_data
 
 
 def compute_center_of_mass(drm: DynamicsRobotModel, q=None, center_zero: bool = False) -> np.ndarray:
@@ -38,11 +38,12 @@ def compute_center_of_mass(drm: DynamicsRobotModel, q=None, center_zero: bool = 
         from ._fallback import _zeros_1d
         return _zeros_1d(3)
     _check_q_shape(drm, qv, "compute_center_of_mass")
+    data = _fresh_data(drm)
     if center_zero:
-        drm.pin.centerOfMass(drm.model, drm.data, qv, False)
+        drm.pin.centerOfMass(drm.model, data, qv, False)
     else:
-        drm.pin.centerOfMass(drm.model, drm.data, qv)
-    return np.asarray(drm.data.com[0], dtype=float).copy()
+        drm.pin.centerOfMass(drm.model, data, qv)
+    return np.asarray(data.com[0], dtype=float).copy()
 
 
 def compute_com_velocity(drm: DynamicsRobotModel, q=None, v=None) -> np.ndarray:
@@ -72,8 +73,9 @@ def compute_com_velocity(drm: DynamicsRobotModel, q=None, v=None) -> np.ndarray:
         return _zeros_1d(3)
     _check_q_shape(drm, qv, "compute_com_velocity")
     _check_v_shape(drm, vv, "compute_com_velocity")
-    drm.pin.computeCentroidalVelocities(drm.model, drm.data, qv, vv)
-    return np.asarray(drm.data.vcom[0], dtype=float).copy()
+    data = _fresh_data(drm)
+    drm.pin.computeCentroidalVelocities(drm.model, data, qv, vv)
+    return np.asarray(data.vcom[0], dtype=float).copy()
 
 
 def compute_centroidal_momentum(drm: DynamicsRobotModel, q=None, v=None) -> np.ndarray:
@@ -108,8 +110,9 @@ def compute_centroidal_momentum(drm: DynamicsRobotModel, q=None, v=None) -> np.n
         return _zeros_1d(6)
     _check_q_shape(drm, qv, "compute_centroidal_momentum")
     _check_v_shape(drm, vv, "compute_centroidal_momentum")
-    drm.pin.ccrba(drm.model, drm.data, qv, vv)
-    return np.asarray(drm.data.hg.vector, dtype=float).copy()
+    data = _fresh_data(drm)
+    drm.pin.ccrba(drm.model, data, qv, vv)
+    return np.asarray(data.hg.vector, dtype=float).copy()
 
 
 def compute_centroidal_matrix(drm: DynamicsRobotModel, q=None, v=None) -> np.ndarray:
@@ -146,8 +149,9 @@ def compute_centroidal_matrix(drm: DynamicsRobotModel, q=None, v=None) -> np.nda
         return np.zeros((6, ncols), dtype=float)
     _check_q_shape(drm, qv, "compute_centroidal_matrix")
     _check_v_shape(drm, vv, "compute_centroidal_matrix")
-    drm.pin.ccrba(drm.model, drm.data, qv, vv)
-    return np.asarray(drm.data.Ag, dtype=float).copy()
+    data = _fresh_data(drm)
+    drm.pin.ccrba(drm.model, data, qv, vv)
+    return np.asarray(data.Ag, dtype=float).copy()
 
 
 # Backward-compatible alias

@@ -10,7 +10,7 @@ except ImportError:
     np = None
 
 from .inertia import _as_q, _as_v, _check_q_shape, _check_v_shape
-from .robot_model import DynamicsRobotModel
+from .robot_model import DynamicsRobotModel, _fresh_data
 
 
 def compute_kinetic_energy(drm: DynamicsRobotModel, q=None, v=None) -> float:
@@ -41,7 +41,8 @@ def compute_kinetic_energy(drm: DynamicsRobotModel, q=None, v=None) -> float:
         return 0.0
     _check_q_shape(drm, qv, "compute_kinetic_energy")
     _check_v_shape(drm, vv, "compute_kinetic_energy")
-    val = drm.pin.computeKineticEnergy(drm.model, drm.data, qv, vv)
+    data = _fresh_data(drm)
+    val = drm.pin.computeKineticEnergy(drm.model, data, qv, vv)
     return float(val)
 
 
@@ -71,7 +72,8 @@ def compute_potential_energy(drm: DynamicsRobotModel, q=None) -> float:
     if not drm.has_pinocchio:
         return 0.0
     _check_q_shape(drm, qv, "compute_potential_energy")
-    val = drm.pin.computePotentialEnergy(drm.model, drm.data, qv)
+    data = _fresh_data(drm)
+    val = drm.pin.computePotentialEnergy(drm.model, data, qv)
     return float(val)
 
 

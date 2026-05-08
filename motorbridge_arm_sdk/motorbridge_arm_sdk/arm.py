@@ -1280,6 +1280,7 @@ class Arm:
             raise ArmError(ArmErrorCode.ERR_STATE, "abort event is set, clear faults first")
         self._abort_event.clear()
         self._runtime.transition(ArmRunState.RUNNING)
+        saved_mode = self._session._current_mode
         self._session.ensure_mode_all(ModeLike.POS_VEL)
         self._cache.update_run_state(ArmRunState.RUNNING)
         try:
@@ -1287,6 +1288,12 @@ class Arm:
         finally:
             if self._runtime.state == ArmRunState.RUNNING:
                 self._runtime.transition(ArmRunState.ENABLED)
+                self._cache.update_run_state(ArmRunState.ENABLED)
+            if saved_mode is not None and saved_mode != ModeLike.POS_VEL:
+                try:
+                    self._session.ensure_mode_all(saved_mode)
+                except Exception as exc:
+                    logger.warning("failed to restore mode after motion: %s", exc)
                 self._cache.update_run_state(ArmRunState.ENABLED)
         payload = {"vlim": vlim, "points": len(points)}
         if steps is not None:

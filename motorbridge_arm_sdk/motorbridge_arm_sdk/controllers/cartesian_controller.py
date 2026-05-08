@@ -164,16 +164,26 @@ class CartesianController:
             interp.override_traj(now, joint_traj)
 
     def get_eef_state(self) -> Pose6D:
-        """Return the current end-effector pose."""
-        return self._arm.get_pose()
+        """Return the current end-effector pose from cached state.
+
+        Uses the latest cached joint positions without triggering a
+        hardware refresh, making this safe to call from the control loop
+        without bus contention.
+        """
+        st = self._arm.get_state()
+        q = st.positions()
+        base_pose = self._arm._kin.forward(q)
+        return self._arm._apply_tool_offset(base_pose)
 
     def get_joint_state(self):
         """Return current joint positions."""
         return self._arm.get_joint_positions()
 
     def get_home_pose(self) -> Pose6D:
-        """Return the home pose (FK at all-zeros)."""
-        return self._arm.get_pose()
+        """Return the home pose (FK at the configured default_home or all-zeros)."""
+        home = self._arm._cfg.default_home or [0.0] * self._arm.num_joints
+        base_pose = self._arm._kin.forward(home)
+        return self._arm._apply_tool_offset(base_pose)
 
     def reset_to_home(self) -> None:
         self._rt.reset_to_home()
