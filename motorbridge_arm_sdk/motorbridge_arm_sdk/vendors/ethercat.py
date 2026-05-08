@@ -1,11 +1,17 @@
-"""EtherCAT-to-CAN bridge interface.
+"""EtherCAT-to-CAN bridge interface (STUB / PLACEHOLDER).
+
+.. warning::
+    This module is a **non-functional reference implementation**.  It defines
+    the interface and data structures for EtherCAT-CAN bridging but does **not**
+    communicate with real hardware.  ``send()`` and ``recv()`` are no-ops that
+    silently discard data.  Do **not** use this in production.
 
 Provides :class:`EtherCatCanBridge` as an alternative CAN transport layer
 for robots that use an EtherCAT-to-CAN gateway instead of direct SocketCAN.
 
 This module defines the interface and a reference implementation.  Actual
-EtherCAT communication requires the ``ethercat`` kernel driver and the
-corresponding hardware.
+EtherCAT communication requires the ``ethercat`` kernel driver, the
+``pysoem`` package, and the corresponding hardware.
 
 Inspired by the arx5-sdk ``EtherCat2Can`` class.
 """
@@ -38,6 +44,11 @@ class CanFrame:
 
 class EtherCatCanBridge:
     """EtherCAT-to-CAN bridge for robots using an EtherCAT gateway.
+
+    .. warning::
+        This is a **stub implementation**.  ``send()`` increments a counter
+        but does NOT transmit data.  ``recv()`` always returns ``None``.
+        Install ``pysoem`` and implement the PDO mapping for real hardware.
 
     This class provides the same logical interface as SocketCAN but routes
     CAN frames through an EtherCAT-to-CAN converter.  The converter
@@ -105,7 +116,7 @@ class EtherCatCanBridge:
         logger.info("EtherCAT bridge closed (tx=%d, rx=%d)", self._tx_count, self._rx_count)
 
     def send(self, frame: CanFrame, channel: int = 0) -> None:
-        """Send a CAN frame through the EtherCAT gateway.
+        """Send a CAN frame through the EtherCAT gateway (STUB: data is discarded).
 
         Args:
             frame: The CAN frame to transmit.
@@ -119,22 +130,20 @@ class EtherCatCanBridge:
             raise RuntimeError("EtherCAT bridge not open")
         if channel < 0 or channel >= self._can_channels:
             raise ValueError(f"channel {channel} out of range [0, {self._can_channels})")
+        logger.debug("STUB send: frame can_id=0x%x, %d bytes discarded", frame.can_id, len(frame.data))
         self._tx_count += 1
 
     def recv(self, timeout_s: float = 0.01) -> CanFrame | None:
-        """Receive a CAN frame from the EtherCAT gateway.
+        """Receive a CAN frame from the EtherCAT gateway (STUB: always returns None).
 
         Args:
             timeout_s: Maximum wait time in seconds.
 
         Returns:
-            A :class:`CanFrame` if one was received, or ``None`` on timeout.
+            Always ``None`` in this stub implementation.
         """
         if not self._is_open:
             raise RuntimeError("EtherCAT bridge not open")
-        if self._rx_queue:
-            self._rx_count += 1
-            return self._rx_queue.pop(0)
         return None
 
     def __enter__(self) -> EtherCatCanBridge:

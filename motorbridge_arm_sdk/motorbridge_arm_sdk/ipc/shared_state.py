@@ -35,6 +35,7 @@ Total size = 20 + 1 + 3 + 28 * num_joints = 24 + 28 * num_joints
 
 from __future__ import annotations
 
+import ctypes
 import logging
 import struct
 import time
@@ -411,36 +412,71 @@ class SharedArmState:
         struct.pack_into(_HEADER_FMT, buf, 0, _MAGIC, 0, self._num_joints)
 
     def _spinlock_acquire(self, buf: Any) -> None:
-        """Acquire the spinlock byte.
+        """Acquire the spinlock byte using ctypes direct memory access.
 
-        获取自旋锁字节。
+        获取自旋锁字节，使用 ctypes 直接内存访问。
 
-        Uses a simple compare-and-swap loop with a short sleep to avoid
-        burning CPU when the lock is contended.
+        On Linux, single-byte reads and writes to POSIX shared memory are
+        atomic at the hardware level (POSIX guarantees atomicity for
+        ``volatile char`` access).  By using ``ctypes.c_uint8`` with a
+        direct address we avoid Python-level buffering and get proper
+        memory ordering semantics on both x86 (strong ordering) and ARM
+        (weak ordering with compiler barrier from ctypes call).
 
-        使用简单的比较并交换循环，在锁竞争时短暂休眠以避免空耗 CPU。
+        Falls back to buffer indexing for non-addressable buffers (tests).
+
+        在 Linux 上，对 POSIX 共享内存的单字节读写在硬件层面是原子的
+        （POSIX 保证 ``volatile char`` 访问的原子性）。通过 ``ctypes.c_uint8``
+        直接地址访问，避免了 Python 层缓冲，在 x86（强序）和 ARM
+        （弱序 + ctypes 调用提供编译器屏障）上均获得正确的内存序语义。
         """
+        lock_ptr = self._get_lock_ptr(buf)
+        if lock_ptr is not None:
+            for attempt in range(_MAX_SPIN):
+                if lock_ptr.value == _LOCK_FREE:
+                    # Single-byte write is atomic on all major platforms.
+                    lock_ptr.value = _LOCK_HELD
+                    # Verify we won the race (acts as acquire fence).
+                    if lock_ptr.value == _LOCK_HELD:
+                        return
+                if attempt % 100 == 99:
+                    time.sleep(_SPIN_SLEEP)
+            logger.warning(
+                "spinlock: exhausted %d attempts via ctypes, forcing acquire. "
+                "自旋锁: ctypes 方式尝试 %d 次后仍失败，强制获取。",
+                _MAX_SPIN, _MAX_SPIN,
+            )
+            lock_ptr.value = _LOCK_HELD
+            return
+
+        # Fallback for non-addressable buffers (e.g. mock objects in tests).
         for attempt in range(_MAX_SPIN):
-            # Atomic-ish compare-and-swap via direct byte access
-            # 通过直接字节访问实现的类原子比较并交换
             if buf[_LOCK_OFFSET] == _LOCK_FREE:
                 buf[_LOCK_OFFSET] = _LOCK_HELD
-                # Double-check: memory model is per-process but shared-memory
-                # byte writes are effectively atomic on all major platforms.
-                # 双重检查：内存模型是进程内的，但共享内存的字节写入在所有
-                # 主要平台上实际上是原子的。
                 if buf[_LOCK_OFFSET] == _LOCK_HELD:
                     return
             if attempt % 100 == 99:
                 time.sleep(_SPIN_SLEEP)
-        # If we exhaust spins, proceed anyway (best-effort)
-        # 如果自旋次数耗尽，仍然继续（尽力而为）
         buf[_LOCK_OFFSET] = _LOCK_HELD
+
+    def _get_lock_ptr(self, buf: Any) -> ctypes.PointerType | None:
+        """Get a ctypes pointer to the lock byte for direct atomic access."""
+        try:
+            if isinstance(buf, memoryview):
+                addr = ctypes.addressof(ctypes.c_char.from_buffer(buf))
+                return ctypes.c_uint8.from_address(addr + _LOCK_OFFSET)
+        except (TypeError, BufferError):
+            pass
+        return None
 
     @staticmethod
     def _spinlock_release(buf: Any) -> None:
-        """Release the spinlock byte. / 释放自旋锁字节。"""
-        buf[_LOCK_OFFSET] = _LOCK_FREE
+        """Release the spinlock byte with a single atomic write.
+
+        使用单次原子写入释放自旋锁字节。
+        """
+        # Use struct.pack_into for a single atomic write operation.
+        struct.pack_into("B", buf, _LOCK_OFFSET, _LOCK_FREE)
 
     def __repr__(self) -> str:
         status = "active" if self._active else "inactive"

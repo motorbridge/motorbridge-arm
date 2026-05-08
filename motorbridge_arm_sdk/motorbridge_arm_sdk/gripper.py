@@ -63,6 +63,7 @@ class GripperConfig:
     vel_ki: float = 0.1
     vlim: float = 1.0
     force_threshold: float = 0.0  # Default computed as half of limit_tau in __post_init__.
+    closing_direction: int = -1  # -1 = decreasing position = closing, +1 = increasing position = closing.
 
     def __post_init__(self):
         if self.force_threshold <= 0.0:
@@ -349,7 +350,13 @@ class Gripper:
         measured torque exceeds the threshold and the gripper is actively
         moving toward a position that would increase the force.
 
+        The closing direction is determined by ``closing_direction`` in
+        the :class:`GripperConfig`:
+        - ``-1`` (default): closing = position decreasing.
+        - ``+1``: closing = position increasing.
+
         / 检查当前力矩是否在力阈值内。在阈值内返回 True，超出返回 False。
+        闭合方向由 :class:`GripperConfig` 中的 ``closing_direction`` 决定。
 
         Args:
             target_pos: The position that was just commanded, used to
@@ -359,11 +366,13 @@ class Gripper:
         if abs(torque) <= self._force_threshold:
             return True
         current_pos = self.get_position(request=False)
-        # If torque exceeds threshold and the gripper is moving in a
-        # direction that increases force, reject.
-        moving_closing = target_pos < current_pos
-        force_closing = torque > 0
-        if moving_closing == force_closing:
+        position_delta = target_pos - current_pos
+        closing_dir = self._cfg.closing_direction
+        # Moving toward closing: the sign of position_delta matches closing_direction.
+        moving_closing = (position_delta > 0 and closing_dir > 0) or (position_delta < 0 and closing_dir < 0)
+        # Force in closing direction: torque sign matches closing_direction.
+        force_closing = (torque > 0 and closing_dir > 0) or (torque < 0 and closing_dir < 0)
+        if moving_closing and force_closing:
             return False
         return True
 

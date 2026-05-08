@@ -103,6 +103,16 @@ class RealtimeController:
     def running(self) -> bool:
         return self._running
 
+    @property
+    def gravity_comp_enabled(self) -> bool:
+        """Whether gravity compensation is configured for this controller."""
+        return self._gravity_comp
+
+    @property
+    def rate_hz(self) -> float:
+        """The configured control loop rate in Hz."""
+        return self._rate_hz
+
     def set_gain(self, kp: list[float], kd: list[float]) -> None:
         """Set per-joint PD gains.
 

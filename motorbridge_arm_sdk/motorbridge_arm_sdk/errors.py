@@ -16,7 +16,7 @@ class ArmErrorCode(str, Enum):
     ERR_UNSUPPORTED = "ERR_UNSUPPORTED"
 
 
-@dataclass(slots=True)
+@dataclass
 class ArmError(Exception):
     code: ArmErrorCode
     message: str

@@ -42,6 +42,7 @@ class MotorBridgeSession:
         self._op_retry_count = 3
         self._op_retry_delay_s = 0.01
         self._lock = threading.Lock()
+        self._current_mode: int | None = None
 
     def _check_index(self, index: int) -> None:
         if index < 0 or index >= len(self._joints):
@@ -74,17 +75,18 @@ class MotorBridgeSession:
                 try:
                     self.disable_all()
                 except Exception as exc:
-                    logger.warning("disable_all() during close failed: %s", exc)
+                    logger.error("disable_all() during close failed: %s", exc)
                 try:
                     self._controller.shutdown()
                 except Exception as exc:
-                    logger.warning("controller.shutdown() during close failed: %s", exc)
+                    logger.error("controller.shutdown() during close failed: %s", exc)
                 try:
                     self._controller.close()
                 except Exception as exc:
-                    logger.warning("controller.close() during close failed: %s", exc)
+                    logger.error("controller.close() during close failed: %s", exc)
                 self._controller = None
             self._joints.clear()
+            self._current_mode = None
 
     def __enter__(self) -> "MotorBridgeSession":
         self.connect()
@@ -157,12 +159,15 @@ class MotorBridgeSession:
         return list(not_ready)
 
     def ensure_mode_all(self, mode: int, timeout_ms: int = 1000) -> None:
+        if self._current_mode == mode:
+            return
         for h in self._joints:
             self._retry_call(
                 lambda hh=h: hh.motor.ensure_mode(mode, timeout_ms),
                 op_name=f"ensure_mode({h.config.name})",
                 err_code=ArmErrorCode.ERR_MODE,
             )
+        self._current_mode = mode
 
     def ensure_mode_joint(self, index: int, mode: int, timeout_ms: int = 1000) -> None:
         self._check_index(index)

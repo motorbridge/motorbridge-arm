@@ -6,6 +6,24 @@ from pathlib import Path
 from ..types import ArmConfig, JointConfig
 
 
+def _find_repo_root() -> Path:
+    """Walk up from this file to find the repository root.
+
+    Looks for ``pyproject.toml`` or ``.git`` as a marker, avoiding the
+    fragile ``parents[N]`` approach that breaks under different install layouts.
+    """
+    current = Path(__file__).resolve().parent
+    for _ in range(10):
+        if (current / "pyproject.toml").exists() or (current / ".git").exists():
+            return current
+        parent = current.parent
+        if parent == current:
+            break
+        current = parent
+    # Last resort: use the original parents[3] guess.
+    return Path(__file__).resolve().parents[3]
+
+
 def _resolve_urdf_path() -> str:
     """Resolve URDF path from package assets, with source-tree fallback."""
     # Try package-installed assets first (works after pip install)
@@ -18,7 +36,7 @@ def _resolve_urdf_path() -> str:
     except Exception:
         pass
     # Fallback: source-tree relative path (development mode)
-    repo_root = Path(__file__).resolve().parents[3]
+    repo_root = _find_repo_root()
     fallback = (
         repo_root
         / "models"
@@ -37,7 +55,7 @@ def _resolve_arm02_urdf_path() -> str:
     resolver tolerant so the SDK still imports when only motorbridge-arm is
     installed.
     """
-    repo_root = Path(__file__).resolve().parents[3]
+    repo_root = _find_repo_root()
     sibling = (
         repo_root.parent
         / "motorbridge-studio"

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import math
 from dataclasses import asdict
 import threading
 import time
@@ -1344,15 +1345,68 @@ class Arm:
         if self._runtime.state == ArmRunState.DISCONNECTED:
             raise ArmError(ArmErrorCode.ERR_STATE, "arm is not connected")
 
+    @staticmethod
+    def _rpy_to_rotation_matrix(roll: float, pitch: float, yaw: float) -> list[list[float]]:
+        """Convert roll-pitch-yaw to a 3x3 rotation matrix (ZYX convention)."""
+        cr, sr = math.cos(roll), math.sin(roll)
+        cp, sp = math.cos(pitch), math.sin(pitch)
+        cy, sy = math.cos(yaw), math.sin(yaw)
+        return [
+            [cy * cp, cy * sp * sr - sy * cr, cy * sp * cr + sy * sr],
+            [sy * cp, sy * sp * sr + cy * cr, sy * sp * cr - cy * sr],
+            [-sp, cp * sr, cp * cr],
+        ]
+
+    @staticmethod
+    def _rotation_matrix_to_rpy(R: list[list[float]]) -> tuple[float, float, float]:
+        """Extract roll-pitch-yaw from a 3x3 rotation matrix (ZYX convention)."""
+        sy = -R[2][0]
+        sy = max(-1.0, min(1.0, sy))
+        pitch = math.asin(sy)
+        if abs(math.cos(pitch)) > 1e-6:
+            roll = math.atan2(R[2][1], R[2][2])
+            yaw = math.atan2(R[1][0], R[0][0])
+        else:
+            # Gimbal lock: roll and yaw are coupled.
+            # pitch = +pi/2: roll - yaw = atan2(R[0][1], R[1][1])
+            # pitch = -pi/2: roll + yaw = atan2(-R[0][1], R[1][1])
+            yaw = 0.0
+            if sy > 0:
+                roll = math.atan2(R[0][1], R[1][1])
+            else:
+                roll = math.atan2(-R[0][1], R[1][1])
+        return roll, pitch, yaw
+
     def _apply_tool_offset(self, pose: Pose6D) -> Pose6D:
-        return Pose6D(
-            x=pose.x + self._tool.x,
-            y=pose.y + self._tool.y,
-            z=pose.z + self._tool.z,
-            roll=pose.roll + self._tool.roll,
-            pitch=pose.pitch + self._tool.pitch,
-            yaw=pose.yaw + self._tool.yaw,
-        )
+        """Apply tool offset as a proper SE(3) frame composition.
+
+        Computes T_base_tool = T_base_flange * T_flange_tool using 4x4
+        homogeneous transform multiplication instead of Euler angle addition.
+        """
+        t = self._tool
+        if t.x == 0.0 and t.y == 0.0 and t.z == 0.0 and t.roll == 0.0 and t.pitch == 0.0 and t.yaw == 0.0:
+            return pose
+
+        R_flange = self._rpy_to_rotation_matrix(pose.roll, pose.pitch, pose.yaw)
+        p_flange = [pose.x, pose.y, pose.z]
+
+        R_tool = self._rpy_to_rotation_matrix(t.roll, t.pitch, t.yaw)
+        p_tool = [t.x, t.y, t.z]
+
+        R_result = [
+            [
+                R_flange[i][0] * R_tool[0][j] + R_flange[i][1] * R_tool[1][j] + R_flange[i][2] * R_tool[2][j]
+                for j in range(3)
+            ]
+            for i in range(3)
+        ]
+        p_result = [
+            R_flange[i][0] * p_tool[0] + R_flange[i][1] * p_tool[1] + R_flange[i][2] * p_tool[2] + p_flange[i]
+            for i in range(3)
+        ]
+
+        roll, pitch, yaw = self._rotation_matrix_to_rpy(R_result)
+        return Pose6D(x=p_result[0], y=p_result[1], z=p_result[2], roll=roll, pitch=pitch, yaw=yaw)
 
     def __enter__(self) -> "Arm":
         return self

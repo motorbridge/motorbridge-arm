@@ -7,7 +7,7 @@ from motorbridge_arm_sdk.motion.executor import JointMotionExecutor
 
 
 def test_run_sends_all_points():
-    ex = JointMotionExecutor(dt_s=0.0)
+    ex = JointMotionExecutor(dt_s=0.001)
     send_fn = MagicMock()
     points = [[float(i), float(i)] for i in range(5)]
     ex.run(points, send_fn, vlim=1.0)
@@ -15,7 +15,7 @@ def test_run_sends_all_points():
 
 
 def test_run_with_abort():
-    ex = JointMotionExecutor(dt_s=0.0)
+    ex = JointMotionExecutor(dt_s=0.001)
     send_fn = MagicMock()
     abort = threading.Event()
     abort.set()

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import threading
 from dataclasses import dataclass
 
 from ..arm import Arm
@@ -78,6 +79,8 @@ class ArmEndPos:
         """Move the arm to its home (zero) position at reduced velocity.
 
         Uses a timeout to prevent indefinite blocking if motion stalls.
+        When a timeout occurs, the motion is cancelled via the arm's abort
+        event and the arm is switched to damping mode for safety.
 
         Args:
             vlim: Velocity limit as a fraction of maximum.  Defaults to
@@ -93,12 +96,20 @@ class ArmEndPos:
                 self.arm.move_j(home, vlim=vlim, profile="min_jerk")
             except Exception as exc:
                 logger.warning("safe_home move failed: %s", exc)
-            done.set()
+            finally:
+                done.set()
 
         t = threading.Thread(target=_go, daemon=True)
         t.start()
         if not done.wait(timeout=timeout_s):
-            logger.warning("safe_home timed out after %.1f s", timeout_s)
+            logger.warning("safe_home timed out after %.1f s, cancelling motion", timeout_s)
+            self.arm._abort_event.set()
+            t.join(timeout=2.0)
+            self.arm._abort_event.clear()
+            try:
+                self.arm.set_to_damping()
+            except Exception as exc:
+                logger.warning("safe_home: damping fallback after timeout failed: %s", exc)
 
     def move_to_ik(self, target: Pose6D, vlim: float = 1.0) -> bool:
         """Move to a target pose using IK + joint-space motion.

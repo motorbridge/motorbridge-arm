@@ -189,14 +189,14 @@ class CartesianController:
         self._running = True
 
         self._arm.mode_mit()
-        if self._rt._gravity_comp:
+        if self._rt.gravity_comp_enabled:
             self._arm.enable_gravity_comp()
 
         q0 = self._arm.get_joint_positions()
         start = Waypoint(timestamp=0.0, pos=list(q0))
         self._rt.interpolator.init_fixed(start)
         self._rt.start()
-        logger.info("CartesianController started at %.0f Hz", self._rt._rate_hz)
+        logger.info("CartesianController started at %.0f Hz", self._rt.rate_hz)
 
     def stop(self) -> None:
         """Stop the Cartesian control loop."""
